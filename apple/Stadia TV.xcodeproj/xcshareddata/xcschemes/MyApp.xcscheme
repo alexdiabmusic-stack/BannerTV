@@ -10,9 +10,6 @@
   <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="YES">
     <Testables>
       <TestableReference skipped="NO" parallelizable="NO">
-        <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="D2F879A3306C57D9000F7B04" BuildableName="MyAppTests.xctest" BlueprintName="MyAppTests" ReferencedContainer="container:Stadia TV.xcodeproj"/>
-      </TestableReference>
-      <TestableReference skipped="NO" parallelizable="NO">
         <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="D2F879B1306C5AA6000F7B04" BuildableName="MyAppUnitTests.xctest" BlueprintName="MyAppUnitTests" ReferencedContainer="container:Stadia TV.xcodeproj"/>
       </TestableReference>
     </Testables>
