@@ -7,6 +7,6 @@
     "home": {"id":"7","name":"Buffalo Sabres","abbreviation":"BUF","score":"3","winner":false},
     "away": {"id":"30","name":"Minnesota Wild","abbreviation":"MIN","score":"2","winner":false},
     "venue":"KeyBank Center", "broadcasts":["SN1","MSG-B","BSNX","BSWI"],
-    "clock":"08:42", "seconds":522, "running":true, "period":2, "periodLabel":"2nd period"
+    "clock":"08:42", "seconds":522, "running":true, "period":2, "periodLabel":"2nd period", "phase":"live"
   }]
 }

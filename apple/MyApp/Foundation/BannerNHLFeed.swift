@@ -6,8 +6,6 @@ nonisolated struct BannerNHLFeed: Decodable {
         let id, name, abbreviation: String
         let score: String?
         let winner: Bool
-
-
     }
 
     struct Game: Decodable {
@@ -19,8 +17,8 @@ nonisolated struct BannerNHLFeed: Decodable {
         let venue, clock, periodLabel: String?
         let seconds, period: Int?
         let running: Bool?
-
-
+        let phase: String?
+        let intermission, extraPeriod: Bool?
     }
 
     let version: Int

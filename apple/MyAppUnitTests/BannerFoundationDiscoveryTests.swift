@@ -3,6 +3,31 @@ import XCTest
 @testable import BannerTV
 
 final class BannerFoundationDiscoveryTests: XCTestCase {
+    func testSharedScorePreservesTheNativeMatchUsedForNavigationAndPlayback() throws {
+        let bundle = Bundle(for: Self.self)
+        let providerURL = try XCTUnwrap(bundle.url(forResource: "live-regulation", withExtension: "json"))
+        let contractURL = try XCTUnwrap(bundle.url(forResource: "score-v1", withExtension: "json"))
+        let dto = try JSONDecoder().decode(NHLGameDTO.self, from: Data(contentsOf: providerURL))
+        let league = League(name: "NHL", shortName: "NHL", path: "hockey/nhl", group: .hockey)
+        let native = NHLGameMapper.match(try XCTUnwrap(NHLGameMapper.game(dto)), league: league)
+        let payload = try String(contentsOf: contractURL, encoding: .utf8)
+        let shared = try XCTUnwrap(BannerNHLFeed.matches(from: payload, league: league).first)
+
+        // Match equality checks only its ID. These fields also drive favourites, EPG lookup and the live desk.
+        XCTAssertEqual(shared.id, native.id)
+        XCTAssertEqual(shared.canonicalID, native.canonicalID)
+        XCTAssertEqual(shared.home, native.home)
+        XCTAssertEqual(shared.away, native.away)
+        XCTAssertEqual(shared.date, native.date)
+        XCTAssertEqual(shared.name, native.name)
+        XCTAssertEqual(shared.shortName, native.shortName)
+        XCTAssertEqual(shared.state, native.state)
+        XCTAssertEqual(shared.statusDetail, native.statusDetail)
+        XCTAssertEqual(shared.liveContext, native.liveContext)
+        XCTAssertEqual(shared.venue, native.venue)
+        XCTAssertEqual(shared.broadcasts, native.broadcasts)
+    }
+
     func testApplePresentationRejectsUnknownWireVersion() {
         XCTAssertThrowsError(try BannerNHLFeed.decode(#"{"version":9,"games":[]}"#))
     }

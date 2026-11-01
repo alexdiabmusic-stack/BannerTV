@@ -68,6 +68,15 @@ class NativeHockeyProviderTest {
             assertEquals(listOf(game().id), NativeHockeyProvider.scheduleWindow(listOf(game(), game(), before, atEnd), start, 2).map { it.id })
         } finally { TimeZone.setDefault(old) }
     }
+    @Test fun weekViewedFromUtcFetchesTheLastEasternDateAcrossDst() {
+        val old = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
+            val start = Dates.parseIso("2024-03-08T16:00:00Z")!!
+            assertEquals(listOf("2024-03-07", "2024-03-14"), NativeHockeyProvider.scheduleDays(start, 7))
+            assertEquals(listOf("2024-03-07"), NativeHockeyProvider.scheduleDays(start, 6))
+        } finally { TimeZone.setDefault(old) }
+    }
     private fun standingsRaw() = parseJson("""{"standings":[
         {"teamAbbrev":{"default":"OTT"},"teamName":{"default":"Ottawa Senators"},"teamCommonName":{"default":"Senators"},"divisionName":"Atlantic","divisionSequence":2,"wins":10,"losses":4,"otLosses":2,"points":22,"goalDifferential":7},
         {"teamAbbrev":{"default":"BOS"},"teamName":{"default":"Boston Bruins"},"divisionName":"Atlantic","divisionSequence":1,"wins":11,"losses":3,"otLosses":2,"points":24},
@@ -148,6 +157,7 @@ class NativeHockeyProviderTest {
         } finally { server.shutdown() }
     }
     @Test fun nativeScheduleVisitsEveryWeekThenCachesTheRange(): Unit = runBlocking {
+        val old = TimeZone.getDefault()
         val server = MockWebServer(); val paths = Collections.synchronizedList(mutableListOf<String>())
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
@@ -156,10 +166,11 @@ class NativeHockeyProviderTest {
             }
         }; server.start()
         try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/Toronto"))
             val provider = NativeHockeyProvider(HttpGateway(OkHttpClient()), baseUrl = server.url("/").toString().removeSuffix("/"), now = { 1L })
             val start = Dates.parseIso("2024-01-01T12:00:00-05:00")!!
             assertEquals(1, provider.schedule(start, 14).size); assertEquals(1, provider.schedule(start, 14).size)
-            assertEquals(setOf("/schedule/2024-01-01", "/schedule/2024-01-08"), paths.toSet()); assertEquals(2, paths.size)
-        } finally { server.shutdown() }
+            assertEquals(listOf("/schedule/2024-01-01", "/schedule/2024-01-08"), paths.sorted())
+        } finally { TimeZone.setDefault(old); server.shutdown() }
     }
 }

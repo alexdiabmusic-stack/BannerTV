@@ -11,10 +11,10 @@ The original Apple Dynamic Type ratchet and NHL Swift library build passed. All 
 | Check | Result |
 | --- | --- |
 | Unified import before NHL switch | Common metadata compiled. Four unit-test tasks, both Android assemblies, 925 passed, five skipped |
-| Integrated common metadata, shared JVM and Android | Gradle build succeeded. Shared 236/236, core 466/471 with five opt-in skips, phone 200/200, TV 28/28. Total **930 passed, zero failures, five skipped** |
+| Integrated common metadata, shared JVM and Android | Gradle build succeeded. Shared 236/236, core 467/472 with five opt-in skips, phone 200/200, TV 28/28. Total **931 passed, zero failures, five skipped** |
 | First shared sports contract | Kotlin/JVM provider and bridge produced the versioned fixture. Swift compiled and decoded Minnesota 2 at Buffalo 3, period two, running clock 08:42, 522 seconds, matching teams and broadcast |
 | Real public provider | The same bridge requested June 24, 2024. Swift decoded Edmonton 1 at Florida 2, final, provider game ID `2023030417` |
-| Failure, cancellation and ranges | Checked sanitized HTTP denial, release of a cancelled request, intermission clock suppression, adjacent calendar windows for a 370-day schedule and identity deduplication |
+| Failure, cancellation and ranges | Checked sanitized HTTP denial, release of a cancelled request, intermission clock suppression, adjacent calendar windows for a 370-day schedule identity deduplication and a seven-day UTC window reaching its last Eastern date across daylight saving time |
 | Apple structural checks | Xcode project and plist pass `plutil`. 681 app/extension/unit-test Swift files parse with the shared feature condition. Fixture decoder builds and runs with the macOS Swift compiler |
 | Apple frameworks and simulator | GitHub Actions ran the shared iOS simulator tests and linked five debug frameworks for iOS device/simulator, tvOS device/simulator and macOS ARM64. Xcode built the app with `BANNER_KMP_ENABLED=NO`. Enabled app and device results are separate gates |
 | Standalone Apple tests | Dynamic Type, ten sports packages (CFL, EPL, F1, LaLiga, MLB, MLS, NBA, NFL, NHL and WNBA) and MatchLinker passed. The native engine suite reported two failing scenarios out of 143 tests |

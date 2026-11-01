@@ -52,6 +52,8 @@ class NhlInteropContractTest {
         assertEquals(JsonNull, game["clock"])
         assertEquals(JsonNull, game["seconds"])
         assertEquals(false, game.getValue("running").jsonPrimitive.boolean)
+        assertEquals(true, game.getValue("intermission").jsonPrimitive.boolean)
+        assertEquals("live", game.getValue("phase").jsonPrimitive.content)
     }
 
     @Test fun failureDoesNotReinterpretNhlIdsOrLeakProviderErrors() = runBlocking {

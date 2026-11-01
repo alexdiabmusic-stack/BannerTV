@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		BA44F0000000000000000007 /* score-v1.json in Resources */ = {isa = PBXBuildFile; fileRef = BA44F0000000000000000006 /* score-v1.json */; };
+		BA44F0000000000000000005 /* live-regulation.json in Resources */ = {isa = PBXBuildFile; fileRef = BA44F0000000000000000004 /* live-regulation.json */; };
 		D293D34C3079ED4B0001A23C /* CarPlay.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D2B5925A3077054D007B21D7 /* CarPlay.framework */; platformFilter = ios; };
 		D293D34E3079ED6B0001A23C /* CarPlay.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D2B5925A3077054D007B21D7 /* CarPlay.framework */; platformFilter = ios; };
 		D293D3513079ED6D0001A23C /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D2F2344830745D0000AA9DC4 /* WidgetKit.framework */; };
@@ -76,6 +78,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		BA44F0000000000000000006 /* score-v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "../contracts/nhl/score-v1.json"; sourceTree = SOURCE_ROOT; };
+		BA44F0000000000000000004 /* live-regulation.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "NHLCoreTests/Tests/NHLCoreTests/Fixtures/live-regulation.json"; sourceTree = SOURCE_ROOT; };
 		000000000000000000000120 /* StadiaTV.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StadiaTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1C0FF1E0000000000000001 /* App.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = App.xcconfig; sourceTree = "<group>"; };
 		D2B5925A3077054D007B21D7 /* CarPlay.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CarPlay.framework; path = System/Library/Frameworks/CarPlay.framework; sourceTree = SDKROOT; };
@@ -196,9 +200,19 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		BA44F0000000000000000008 /* Foundation contract fixtures */ = {
+			isa = PBXGroup;
+			children = (
+				BA44F0000000000000000004 /* live-regulation.json */,
+				BA44F0000000000000000006 /* score-v1.json */,
+			);
+			name = "Foundation contract fixtures";
+			sourceTree = "<group>";
+		};
 		000000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
+				BA44F0000000000000000008 /* Foundation contract fixtures */,
 				000000000000000000000010 /* MyApp */,
 				D2F879A5306C57D9000F7B04 /* MyAppTests */,
 				D2F879B3306C5AA6000F7B04 /* MyAppUnitTests */,
@@ -475,6 +489,8 @@
 		D2F879B0306C5AA6000F7B04 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
+				BA44F0000000000000000007 /* score-v1.json in Resources */,
+				BA44F0000000000000000005 /* live-regulation.json in Resources */,
 			);
 		};
 		D2F879BD306C5EF1000F7B04 /* Resources */ = {

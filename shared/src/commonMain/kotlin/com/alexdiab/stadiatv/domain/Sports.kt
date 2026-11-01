@@ -91,7 +91,11 @@ data class TeamSide(
 
 /** Timing as reported by the provider, including clocks shown on scheduled or completed games. */
 @Immutable
-data class GameTiming(val clock: String?, val secondsRemaining: Int?, val running: Boolean, val period: Int?, val periodLabel: String)
+data class GameTiming(
+    val clock: String?, val secondsRemaining: Int?, val running: Boolean,
+    val period: Int?, val periodLabel: String, val phase: String? = null,
+    val intermission: Boolean = false, val extraPeriod: Boolean = false,
+)
 
 /** Optional live detail a provider can attach to a match (clock, period, sport situation). */
 @Immutable

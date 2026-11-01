@@ -62,6 +62,7 @@ internal object NhlDiscoveryWire {
         val state: String, val status: String, val home: Side, val away: Side, val venue: String?,
         val broadcasts: List<String>, val clock: String?, val seconds: Int?, val running: Boolean?,
         val period: Int?, val periodLabel: String?,
+        val phase: String?, val intermission: Boolean = false, val extraPeriod: Boolean = false,
     )
 
     private fun side(team: TeamSide): Side {
@@ -77,7 +78,8 @@ internal object NhlDiscoveryWire {
             require(match.id == "nhl:${reference.gameId}" && reference.gameId.matches(Regex("[0-9]{10}")))
             Game(reference.gameId, match.startMillis, match.name, match.shortName, match.state.name.lowercase(),
                 match.statusDetail, side(match.home), side(match.away), match.venue, match.broadcasts, match.live.timing?.clock,
-                match.live.timing?.secondsRemaining, match.live.timing?.running, match.live.timing?.period, match.live.timing?.periodLabel)
+                match.live.timing?.secondsRemaining, match.live.timing?.running, match.live.timing?.period, match.live.timing?.periodLabel,
+                match.live.timing?.phase, match.live.timing?.intermission == true, match.live.timing?.extraPeriod == true)
         }
         return Json.encodeToString(Feed(1, games))
     }

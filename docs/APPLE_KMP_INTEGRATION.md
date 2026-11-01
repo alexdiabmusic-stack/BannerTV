@@ -28,7 +28,7 @@ Only default application instances of `NHLProvider` select KMP in the enabled bu
 
 `AppleNhlDiscovery` calls the native NHL provider directly. It moves work off the UI dispatcher, bounds requests, propagates cancellation, and returns either a versioned discovery payload or a sanitized failure with the available HTTP status. The Swift adapter cancels the Kotlin job and resumes its own waiting continuation once. An obsolete result cannot resume a cancelled Swift task. The wide-range schedule adapter uses consecutive local-calendar windows and deduplicates by source identity.
 
-The Swift projection uses the existing numeric match/team IDs, `league.bannerKey`, and `banner-asset:/NHLLogo_…`. It retains clock seconds, the running flag, period, venue and broadcast names. Pregame scores use the shared provider's policy of omitting unconfirmed display scores. Existing Game Centre and channel matching still consume the Apple `Match`.
+The Swift projection uses the existing numeric match/team IDs, `league.bannerKey`, and `banner-asset:/NHLLogo_…`. It retains clock seconds, the running flag, period, venue and broadcast names. Both routes use the original Apple NHL status-label formatter. A bundled fixture compares the projected teams, game identity, time, status label, broadcast list and other fields used by native navigation and stream matching. The schedule covers every NHL Eastern date intersecting the viewer’s local window. Pregame scores use the shared provider's policy of omitting unconfirmed display scores. Existing Game Centre and channel matching still consume the Apple `Match`.
 
 ## Evidence and rollback
 
