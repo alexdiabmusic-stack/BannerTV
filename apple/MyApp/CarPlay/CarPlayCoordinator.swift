@@ -50,7 +50,9 @@ final class CarPlayCoordinator: NSObject, CPNowPlayingTemplateObserver {
                                             animated: false, completion: nil)
         CPNowPlayingTemplate.shared.add(self)
         CPNowPlayingTemplate.shared.upNextTitle = String(localized: "Up Next")
+        #if !BANNER_NO_CARPLAY_MINIPLAYER
         if #available(iOS 27.0, *) { CPNowPlayingTemplate.shared.allowsMiniPlayer = CarPlayRollout.shared.miniPlayer }
+        #endif
         playback.onFailure = { [weak self] _ in
             self?.showError(String(localized: "No playable broadcast is available. Choose another source."))
         }
@@ -147,7 +149,9 @@ final class CarPlayCoordinator: NSObject, CPNowPlayingTemplateObserver {
 
     private func render() {
         guard connected else { return }
+        #if !BANNER_NO_CARPLAY_MINIPLAYER
         if #available(iOS 27.0, *) { CPNowPlayingTemplate.shared.allowsMiniPlayer = CarPlayRollout.shared.miniPlayer }
+        #endif
         renderForYou()
         renderLive()
         renderListen()

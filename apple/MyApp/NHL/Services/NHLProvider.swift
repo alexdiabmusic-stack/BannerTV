@@ -8,8 +8,22 @@ actor NHLProvider: NativeSportsProvider {
     private var standingsCache: (Date, NHLStandingsResponse)?
     private var rosterCache: [String: (Date, [RosterGroup])] = [:]
     private var scheduleCache: [String: (Date, [Match])] = [:]
-    init(client: any NHLAPIClientProtocol = NHLAPIClient.shared) { self.client = client }
+    nonisolated let usesSharedDiscovery: Bool
+
+    init(client: (any NHLAPIClientProtocol)? = nil) {
+        self.client = client ?? NHLAPIClient.shared
+        #if BANNER_SHARED_FOUNDATION
+        self.usesSharedDiscovery = client == nil
+        #else
+        self.usesSharedDiscovery = false
+        #endif
+    }
     func scores(on date: Date?) async throws -> [Match] {
+        #if BANNER_SHARED_FOUNDATION
+        if usesSharedDiscovery {
+            return try await BannerAppEnvironment.shared.foundationHost.scores(on: date, league: league)
+        }
+        #endif
         let key = date.map(NHLDate.day) ?? "now"
         if let (time, matches) = scoreCache[key], Date().timeIntervalSince(time) < 10 { return matches }
         let response = try await client.score(date: date)
@@ -18,6 +32,11 @@ actor NHLProvider: NativeSportsProvider {
         return matches
     }
     func schedule(start: Date, days: Int) async throws -> [Match] {
+        #if BANNER_SHARED_FOUNDATION
+        if usesSharedDiscovery {
+            return try await BannerAppEnvironment.shared.foundationHost.schedule(start: start, days: days, league: league)
+        }
+        #endif
         let end = Calendar.current.date(byAdding: .day, value: max(1, days), to: start) ?? start
         var cursor = start
         var matches: [String: Match] = [:]
@@ -79,9 +98,15 @@ actor NHLProvider: NativeSportsProvider {
         if let number = Int(teamID) {
             // Game identity remains numeric. The roster route requires an abbreviation;
             // resolve it from NHL discovery, never from an ESPN ID or display name.
-            let games = try await client.score(date: nil).games
-            let team = games.flatMap { [$0.homeTeam, $0.awayTeam] }.first { $0.id == number }
-            if let team { abbreviation = team.abbreviation }
+            let discovered: String?
+            if usesSharedDiscovery {
+                let matches = try await scores(on: nil)
+                discovered = matches.lazy.flatMap { [$0.home, $0.away] }.first { $0.teamID == String(number) }?.abbreviation
+            } else {
+                let games = try await client.score(date: nil).games
+                discovered = games.flatMap { [$0.homeTeam, $0.awayTeam] }.first { $0.id == number }?.abbreviation
+            }
+            if let discovered { abbreviation = discovered }
             else {
                 let currentTeams = try await teams()
                 // NHL player/roster responses do not expose a complete team-ID catalog.

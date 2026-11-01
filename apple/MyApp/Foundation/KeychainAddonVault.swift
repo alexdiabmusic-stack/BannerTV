@@ -1,3 +1,4 @@
+#if BANNER_SHARED_FOUNDATION
 import Foundation
 import Security
 import BannerFoundation
@@ -46,3 +47,4 @@ final class KeychainAddonVault: NSObject, AddonVault {
                 userInfo: [NSLocalizedDescriptionKey: "The add-on configuration could not be unlocked or saved."])
     }
 }
+#endif

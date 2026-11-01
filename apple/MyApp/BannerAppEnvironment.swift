@@ -13,6 +13,10 @@ import Combine
 final class BannerAppEnvironment: ObservableObject {
     static let shared = BannerAppEnvironment()
 
+    #if BANNER_SHARED_FOUNDATION
+    lazy var foundationHost = BannerFoundationHost()
+    #endif
+
     let preferences = PreferencesStore()
     let channelPreferences = ChannelPreferencesStore()
     let playlistStore = PlaylistStore()

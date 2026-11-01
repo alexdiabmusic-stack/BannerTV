@@ -245,11 +245,27 @@
 		};
 /* End PBXHeadersBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+        BA4400000000000000000001 /* Build BannerFoundation */ = {
+            isa = PBXShellScriptBuildPhase;
+            alwaysOutOfDate = 1;
+            buildActionMask = 2147483647;
+            files = ();
+            inputPaths = ();
+            name = "Build BannerFoundation";
+            outputPaths = ();
+            runOnlyForDeploymentPostprocessing = 0;
+            shellPath = /bin/sh;
+            shellScript = "\"$SRCROOT/scripts/build-foundation.sh\"\n";
+        };
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXNativeTarget section */
 		000000000000000100000000 /* MyApp */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 000000000000000110000000 /* Build configuration list for PBXNativeTarget "MyApp" */;
 			buildPhases = (
+				BA4400000000000000000001 /* Build BannerFoundation */,
 				000000000000000120000000 /* Sources */,
 				000000000000000130000000 /* Frameworks */,
 				000000000000000140000000 /* Resources */,

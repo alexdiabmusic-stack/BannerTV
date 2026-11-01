@@ -89,6 +89,10 @@ data class TeamSide(
     val colorHex: String? = null,
 )
 
+/** Timing as reported by the provider, including clocks shown on scheduled or completed games. */
+@Immutable
+data class GameTiming(val clock: String?, val secondsRemaining: Int?, val running: Boolean, val period: Int?, val periodLabel: String)
+
 /** Optional live detail a provider can attach to a match (clock, period, sport situation). */
 @Immutable
 data class LiveContext(
@@ -96,6 +100,7 @@ data class LiveContext(
     val period: String? = null,
     /** Short human lines such as "2 outs · 1-2 count" or "Power play · 1:12". */
     val situation: List<String> = emptyList(),
+    val timing: GameTiming? = null,
 ) {
     companion object { val EMPTY = LiveContext() }
 }

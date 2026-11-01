@@ -159,11 +159,19 @@ class NativeHockeyProvider(
                 state == GameState.FINAL -> "Final${extra?.let { " · $it" } ?: ""}"
                 intermission && state == GameState.LIVE -> "Intermission · $period"
                 state == GameState.LIVE -> listOfNotNull(clock, period.takeIf(String::isNotBlank)).joinToString(" · ")
+                raw["gameState"].string() !in setOf("FUT", "PRE") -> "Status unavailable"
                 else -> Dates.kickoff(start)
             }
+            val timing = GameTiming(
+                clock.takeUnless { intermission },
+                raw["clock"]["secondsRemaining"].stringOrNull()?.toIntOrNull()?.takeUnless { intermission },
+                raw["clock"]["running"].bool() && !intermission,
+                raw["periodDescriptor"]["number"].stringOrNull()?.toIntOrNull(),
+                period,
+            )
             return Match("nhl:$id", nhl, start, "${away.displayName} at ${home.displayName}", "${away.abbreviation} @ ${home.abbreviation}", state, label, home, away,
                 broadcasts = raw["tvBroadcasts"].array.mapNotNull { it["network"].stringOrNull() }.distinct(), venue = local(raw["venue"]).takeIf(String::isNotBlank),
-                live = if (state == GameState.LIVE) LiveContext(clock.takeUnless { intermission }, raw["periodDescriptor"]["number"].stringOrNull()) else LiveContext.EMPTY,
+                live = if (state == GameState.LIVE) LiveContext(timing.clock, timing.period?.toString(), timing = timing) else LiveContext(timing = timing),
                 nativeReference = NativeGameReference("NHL", id, raw["season"].stringOrNull()?.toIntOrNull()))
         }
 

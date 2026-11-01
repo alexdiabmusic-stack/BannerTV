@@ -36,6 +36,7 @@ class AppleFoundation(cacheDirectory: String, vault: AddonVault) {
     private val timingHttp = client(timing = true)
     private val addonHttp = client()
     val sports = SharedSports(sportsHttp, SportsFile(cacheDirectory), KtorF1Transport(timingHttp))
+    val nhlDiscovery = com.alexdiab.stadiatv.sports.AppleNhlDiscovery(sports.nhl, scope)
     val sportsBridge = SportsBridge(sports.sports,scope)
     val espnFantasy = EspnFantasyApi(sportsHttp)
     val sleeperFantasy = SleeperFantasyApi(sportsHttp)
