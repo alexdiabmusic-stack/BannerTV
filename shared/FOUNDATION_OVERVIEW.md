@@ -1,5 +1,7 @@
 # Banner TV foundation: what is included
 
+This is the pre-consolidation feature inventory. Current repository ownership and Apple integration results are recorded in [the migration matrix](../docs/MIGRATION_MATRIX.md) and [platform parity](../docs/PLATFORM_PARITY.md).
+
 This foundation separates reusable product logic from each platform's interface, player and operating-system integrations. Android phone and Fire TV already consume the shared JVM artifact through `core`. Kotlin/Native targets and Apple adapters exist, but the Swift application has not yet been switched to the new framework or verified in Xcode.
 
 ## Architecture and ownership

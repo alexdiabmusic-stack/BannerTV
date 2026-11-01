@@ -45,7 +45,7 @@ private final class FoundationRequest {
 
     func value(_ start: (@escaping (String?, SportsFailure?) -> Void) -> SportsRequest) async throws -> String {
         try Task.checkCancellation()
-        return try await withTaskCancellationHandler {
+        let payload: String = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 self.continuation = continuation
                 guard !Task.isCancelled else { cancel(); return }
@@ -68,6 +68,8 @@ private final class FoundationRequest {
         } onCancel: {
             Task { @MainActor in self.cancel() }
         }
+        try Task.checkCancellation()
+        return payload
     }
 
     private func cancel() {

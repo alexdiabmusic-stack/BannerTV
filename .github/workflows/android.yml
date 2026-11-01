@@ -1,0 +1,43 @@
+name: Android and shared contracts
+on:
+  pull_request:
+    paths: &inputs
+      - 'app/**'
+      - 'core/**'
+      - 'mobile/**'
+      - 'shared/**'
+      - 'contracts/**'
+      - 'apple/NHLCoreTests/**'
+      - 'gradle/**'
+      - 'gradlew*'
+      - '*.gradle.kts'
+      - 'gradle.properties'
+      - 'scripts/bootstrap-public-sports.py'
+      - '.github/workflows/android.yml'
+  push:
+    branches: [main]
+    paths: *inputs
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: python3 scripts/bootstrap-public-sports.py
+      - run: >-
+          ./gradlew :shared:compileCommonMainKotlinMetadata :shared:jvmTest
+          :core:testDebugUnitTest :mobile:testDebugUnitTest :app:testDebugUnitTest
+          :mobile:assembleDebug :app:assembleDebug -PpublicBuild=true

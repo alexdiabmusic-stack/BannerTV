@@ -1,0 +1,50 @@
+name: Apple and shared contracts
+on:
+  pull_request:
+    paths: &inputs
+      - 'apple/**'
+      - 'shared/**'
+      - 'contracts/**'
+      - 'scripts/**'
+      - 'gradle/**'
+      - 'gradlew*'
+      - '*.gradle.kts'
+      - 'gradle.properties'
+      - '.github/workflows/apple.yml'
+  push:
+    branches: [main]
+    paths: *inputs
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: apple-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  apple-integration:
+    runs-on: macos-26
+    timeout-minutes: 100
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - run: python3 scripts/bootstrap-public-sports.py
+      - run: |
+          xcodebuild -version
+          bash apple/scripts/test-all.sh checks
+          scripts/check-nhl-contract.sh
+      - name: Native Apple fixtures
+        run: bash apple/scripts/test-all.sh packages
+      - name: Build Apple frameworks and run simulator contracts
+        run: >-
+          ./gradlew :shared:iosSimulatorArm64Test :shared:linkDebugFrameworkIosArm64
+          :shared:linkDebugFrameworkIosSimulatorArm64 :shared:linkDebugFrameworkMacosArm64
+          :shared:linkDebugFrameworkTvosArm64 :shared:linkDebugFrameworkTvosSimulatorArm64
+          -PpublicBuild=true
+      - name: Build original native route, then test shared route and real NHL request
+        run: apple/scripts/verify-foundation.sh

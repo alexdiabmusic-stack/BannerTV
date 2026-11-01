@@ -7,7 +7,10 @@ set -e
 # Config/Secrets.xcconfig, which Config/App.xcconfig includes; Info.plist
 # reads them as $(ODDS_API_KEY) and $(YOUTUBE_API_KEY).
 
-SECRETS="$CI_PRIMARY_REPOSITORY_PATH/Config/Secrets.xcconfig"
+APPLE_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+python3 "$APPLE_ROOT/../scripts/bootstrap-public-sports.py"
+umask 077
+SECRETS="$APPLE_ROOT/Config/Secrets.xcconfig"
 : > "$SECRETS"
 
 if [ -n "$YOUTUBE_API_KEY" ]; then
@@ -23,8 +26,8 @@ fi
 # Report release-readiness problems on archive builds. Warns by default; set
 # STRICT_RELEASE_CONFIG=1 in the workflow to fail the build instead.
 if [ "${CI_XCODEBUILD_ACTION:-}" = "archive" ]; then
-    sh "$CI_PRIMARY_REPOSITORY_PATH/scripts/check-release-config.sh"
+    sh "$APPLE_ROOT/scripts/check-release-config.sh"
 fi
 
 # Warn when a change adds fixed-size fonts (text that ignores Dynamic Type). STRICT_DYNAMIC_TYPE=1 fails the build.
-sh "$CI_PRIMARY_REPOSITORY_PATH/scripts/check-dynamic-type.sh"
+sh "$APPLE_ROOT/scripts/check-dynamic-type.sh"

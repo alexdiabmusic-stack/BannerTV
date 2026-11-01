@@ -1,5 +1,7 @@
 # BannerTV shared foundation
 
+For the unified repository and current Apple rollout, see [Apple integration](../docs/APPLE_KMP_INTEGRATION.md) and [platform validation](../docs/PLATFORM_PARITY.md). The original foundation verification records describe the pre-consolidation baseline.
+
 This module owns portable business logic and provider clients. Android phone and Fire TV consume its JVM artifact through `core`. iOS targets produce `BannerFoundation`; host linking and device verification are not complete yet. The existing native UIs and players remain platform code.
 
 See [the detailed foundation breakdown](FOUNDATION_OVERVIEW.md) for feature ownership, the cinematic movie flow, credential provisioning and remaining integration work.
@@ -43,7 +45,7 @@ flowchart TD
 
 - `commonMain`: domain models, HTTP contracts, native sports implementations, provider routing, portable caches, fantasy, news/ranking, preferences, add-ons and TMDB.
 - `jvmMain`: existing calendar compatibility, JVM filesystem/locking and cache constructors accepted by the Android hosts.
-- `iosMain`: Foundation calendar/filesystem/locking, Ktor/Darwin transport and `AppleFoundation` assembly.
+- `appleMain`: Foundation calendar/filesystem/locking, Ktor/Darwin transport and `AppleFoundation` assembly.
 - `core`: Android app lifetime, encrypted device storage, XML parsing, sockets, playlist/guide loading, scheduling, player and OS services. Playlist/XMLTV/EPG processing and cloud-file operations are **not yet fully migrated to commonMain**. They continue working through the existing Android code.
 - `mobile`, `app`: existing UI, focus, accessibility and playback behavior. No promise of a lag-free network stream.
 
