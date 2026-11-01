@@ -32,7 +32,7 @@ The Swift projection uses the existing numeric match/team IDs, `league.bannerKey
 
 ## Evidence and rollback
 
-The fixture originated in the pinned Apple NHL suite. The shared JVM test requires the native Kotlin mapper/bridge to emit the matching JSON structure. A separate executable built with the installed Swift compiler decodes that version using the production Swift decoder. It also consumes an actual historical NHL response through the JVM build of the same bridge. This provides evidence for the wire and identity contract. It does not execute the iOS framework or Darwin transport. See [validation results](PLATFORM_PARITY.md).
+The fixture originated in the pinned Apple NHL suite. The shared JVM test requires the native Kotlin mapper/bridge to emit the matching JSON structure. A separate executable built with the installed Swift compiler decodes that version using the production Swift decoder. It also consumes an actual historical NHL response through the JVM build of the same bridge. These local checks verify the wire and identity contract. Separately, the hosted simulator runs the existing Apple app with its Kotlin/Native framework and Darwin transport. Its historical score request verified the game ID, both team IDs and the bundled logo scheme. See [validation results](PLATFORM_PARITY.md).
 
 Set `BANNER_KMP_ENABLED=NO` to return to the original native sport routing. Neither configuration migrates stored data. Keep the default native until the enabled app passes CI and device checks for navigation, background/foreground refresh, favourites, Game Centre entry, CarPlay and stream matching.
 
