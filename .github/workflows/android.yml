@@ -22,7 +22,8 @@ permissions:
   contents: read
 concurrency:
   group: android-${{ github.ref }}
-  cancel-in-progress: true
+  # Apple-side review fixes also update the PR head. Let an active Android regression report its result.
+  cancel-in-progress: false
 jobs:
   regression:
     runs-on: ubuntu-latest
@@ -39,6 +40,8 @@ jobs:
             JAVA_HOME="${JAVA_HOME_21_X64:-$JAVA_HOME}" "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
           fi
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
       - run: python3 scripts/bootstrap-public-sports.py
       - run: >-
           ./gradlew :shared:compileCommonMainKotlinMetadata :shared:jvmTest
