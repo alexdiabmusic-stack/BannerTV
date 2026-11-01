@@ -27,7 +27,7 @@ The local JDK 26 Gradle worker initially failed to spawn. Using a fresh single-u
 
 ## Native discovery stability
 
-At `575dd34`, the fixture comparing the original and shared matches passed inside the iPhone app. The same simulator run reported an invalid free during real discovery. Keep the feature opt-in while the stack is diagnosed. CI now repeats discovery on separate launches, checks both individual test results, and prints the faulting thread when Xcode records an app crash. [Observed simulator failure](https://github.com/alexdiabmusic-stack/BannerTV/actions/runs/41362389305)
+At `575dd34`, the fixture comparing the original and shared matches passed inside the iPhone app. The same simulator run reported an invalid free during real discovery. On the following run both the real score/schedule and native fixture passed on two fresh launches. The third launch reproduced the crash. The symbolicated fault was `OnboardingStore.__deallocating_deinit` calling Swift’s back-deployed main-actor deinitializer while SwiftUI discarded an onboarding view. The store now explicitly uses nonisolated teardown and retains main-actor isolation for its UI state. CI repeats the live, projection and synchronous store-release tests on three launches. [Faulting thread](https://github.com/alexdiabmusic-stack/BannerTV/actions/runs/41363108294) · [Swift runtime issue](https://github.com/swiftlang/swift/issues/88036) [Observed simulator failure](https://github.com/alexdiabmusic-stack/BannerTV/actions/runs/41362389305)
 
 ## Inherited native player failures
 

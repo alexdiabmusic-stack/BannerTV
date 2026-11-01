@@ -3,6 +3,18 @@ import XCTest
 @testable import BannerTV
 
 final class BannerFoundationDiscoveryTests: XCTestCase {
+    @MainActor func testOnboardingStoreReleasesDuringSynchronousViewUpdates() {
+        weak var released: OnboardingStore?
+        ViewUpdate.$active.withValue(true) {
+            autoreleasepool {
+                let store = OnboardingStore()
+                store.selectedSportIDs.insert("hockey")
+                released = store
+            }
+            XCTAssertNil(released)
+        }
+    }
+
     func testSharedScorePreservesTheNativeMatchUsedForNavigationAndPlayback() throws {
         let bundle = Bundle(for: Self.self)
         let providerURL = try XCTUnwrap(bundle.url(forResource: "live-regulation", withExtension: "json"))
@@ -55,4 +67,8 @@ final class BannerFoundationDiscoveryTests: XCTestCase {
         XCTAssertEqual(scheduled.date, kickoff)
         XCTAssertTrue(schedule.allSatisfy { Calendar.current.isDate($0.date, inSameDayAs: kickoff) })
     }
+}
+
+private enum ViewUpdate {
+    @TaskLocal static var active = false
 }

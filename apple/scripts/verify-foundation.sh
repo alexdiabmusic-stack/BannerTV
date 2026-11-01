@@ -24,6 +24,7 @@ verify_discovery() {
             -derivedDataPath "$scratch/shared" BANNER_KMP_ENABLED=YES -parallel-testing-enabled NO \
             -only-testing:MyAppUnitTests/BannerFoundationDiscoveryTests/testRealSharedNHLDiscoveryPreservesAppleNavigationIDs \
             -only-testing:MyAppUnitTests/BannerFoundationDiscoveryTests/testSharedScorePreservesTheNativeMatchUsedForNavigationAndPlayback \
+            -only-testing:MyAppUnitTests/BannerFoundationDiscoveryTests/testOnboardingStoreReleasesDuringSynchronousViewUpdates \
             -resultBundlePath "$scratch/live-$iteration.xcresult"
         xcrun xcresulttool get test-results tests --path "$scratch/live-$iteration.xcresult" > "$scratch/live-$iteration.json"
         python3 - "$scratch/live-$iteration.json" <<'PY'
@@ -40,7 +41,8 @@ def passed(node, required):
 with open(sys.argv[1]) as f:
     nodes = json.load(f)
     for name in ("testRealSharedNHLDiscoveryPreservesAppleNavigationIDs",
-                 "testSharedScorePreservesTheNativeMatchUsedForNavigationAndPlayback"):
+                 "testSharedScorePreservesTheNativeMatchUsedForNavigationAndPlayback",
+                 "testOnboardingStoreReleasesDuringSynchronousViewUpdates"):
         if not passed(nodes, name):
             raise SystemExit(f"{name} must execute and pass.")
 PY
