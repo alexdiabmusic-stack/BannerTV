@@ -33,8 +33,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Ensure required Android SDK packages
+        run: |
+          if [[ ! -f "$ANDROID_HOME/platforms/android-36/android.jar" || ! -x "$ANDROID_HOME/build-tools/36.0.0/aapt2" ]]; then
+            JAVA_HOME="${JAVA_HOME_21_X64:-$JAVA_HOME}" "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          fi
       - uses: gradle/actions/setup-gradle@v4
       - run: python3 scripts/bootstrap-public-sports.py
       - run: >-

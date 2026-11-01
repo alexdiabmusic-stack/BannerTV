@@ -21,6 +21,16 @@ concurrency:
   group: apple-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  native-fixtures:
+    runs-on: macos-26
+    timeout-minutes: 55
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/bootstrap-public-sports.py
+      - run: bash apple/scripts/test-all.sh checks
+      - run: bash apple/scripts/test-all.sh packages
   apple-integration:
     runs-on: macos-26
     timeout-minutes: 100
@@ -36,10 +46,7 @@ jobs:
       - run: python3 scripts/bootstrap-public-sports.py
       - run: |
           xcodebuild -version
-          bash apple/scripts/test-all.sh checks
           scripts/check-nhl-contract.sh
-      - name: Native Apple fixtures
-        run: bash apple/scripts/test-all.sh packages
       - name: Build Apple frameworks and run simulator contracts
         run: >-
           ./gradlew :shared:iosSimulatorArm64Test :shared:linkDebugFrameworkIosArm64

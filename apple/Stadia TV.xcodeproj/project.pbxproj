@@ -251,7 +251,7 @@
             alwaysOutOfDate = 1;
             buildActionMask = 2147483647;
             files = ();
-            inputPaths = ();
+            inputPaths = ("$(SRCROOT)/scripts/build-foundation.sh");
             name = "Build BannerFoundation";
             outputPaths = ();
             runOnlyForDeploymentPostprocessing = 0;
