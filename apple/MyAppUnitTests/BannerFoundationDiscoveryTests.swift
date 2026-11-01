@@ -44,7 +44,12 @@ final class BannerFoundationDiscoveryTests: XCTestCase {
         XCTAssertEqual(game.home.teamID, "13")
         XCTAssertEqual(game.away.teamID, "22")
         XCTAssertEqual(game.home.logoURL?.scheme, "banner-asset")
-        let schedule = try await SportsRepository.shared.legacyScoreboards(for: league, starting: day, days: 1)
-        XCTAssertTrue(schedule.contains { $0.canonicalID == game.canonicalID })
+        // The NHL lists Game 7 on June 24 Eastern. Its midnight UTC kickoff is June 25 on a UTC phone.
+        let kickoff = try XCTUnwrap(ISO8601DateFormatter().date(from: "2024-06-25T00:00:00Z"))
+        XCTAssertEqual(game.date, kickoff)
+        let schedule = try await SportsRepository.shared.legacyScoreboards(for: league, starting: kickoff, days: 1)
+        let scheduled = try XCTUnwrap(schedule.first { $0.canonicalID == game.canonicalID })
+        XCTAssertEqual(scheduled.date, kickoff)
+        XCTAssertTrue(schedule.allSatisfy { Calendar.current.isDate($0.date, inSameDayAs: kickoff) })
     }
 }
