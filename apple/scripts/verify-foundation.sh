@@ -12,9 +12,7 @@ else: raise SystemExit("An available iPhone simulator is required")' <<< "$list"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/banner-xcode.XXXXXX")
 common=(-project 'Stadia TV.xcodeproj' -scheme MyApp -configuration Debug -destination "id=$destination" CODE_SIGNING_ALLOWED=NO)
 xcodebuild build "${common[@]}" -derivedDataPath "$scratch/native" BANNER_KMP_ENABLED=NO
-xcodebuild test "${common[@]}" -derivedDataPath "$scratch/shared" BANNER_KMP_ENABLED=YES \
-    -only-testing:MyAppTests -only-testing:MyAppUnitTests -parallel-testing-enabled NO
-TEST_RUNNER_BANNER_LIVE_PROBE=1 xcodebuild test-without-building "${common[@]}" \
+TEST_RUNNER_BANNER_LIVE_PROBE=1 xcodebuild test "${common[@]}" \
     -derivedDataPath "$scratch/shared" BANNER_KMP_ENABLED=YES -parallel-testing-enabled NO \
     -only-testing:MyAppUnitTests/BannerFoundationDiscoveryTests/testRealSharedNHLDiscoveryPreservesAppleNavigationIDs \
     -resultBundlePath "$scratch/live.xcresult"
@@ -34,3 +32,5 @@ with open(sys.argv[1]) as f:
     if not passed(json.load(f)):
         raise SystemExit("The real Swift-to-Kotlin NHL test must execute and pass.")
 PY
+xcodebuild test "${common[@]}" -derivedDataPath "$scratch/shared" BANNER_KMP_ENABLED=YES \
+    -only-testing:MyAppTests -only-testing:MyAppUnitTests -parallel-testing-enabled NO

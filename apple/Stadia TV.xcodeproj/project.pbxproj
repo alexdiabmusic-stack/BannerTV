@@ -31,6 +31,13 @@
 			remoteGlobalIDString = D2F2346E30746CBE00AA9DC4;
 			remoteInfo = BannerSharedKit;
 		};
+		BA4400000000000000000002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000100000000;
+			remoteInfo = MyApp;
+		};
 		D2F879B6306C5AA6000F7B04 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 000000000000000000000000 /* Project object */;
@@ -333,6 +340,9 @@
 			);
 			buildRules = (
 			);
+			dependencies = (
+				BA4400000000000000000003 /* PBXTargetDependency */,
+			);
 			fileSystemSynchronizedGroups = (
 				D2F879A5306C57D9000F7B04 /* MyAppTests */,
 			);
@@ -404,6 +414,7 @@
 					};
 					D2F879A3306C57D9000F7B04 = {
 						CreatedOnToolsVersion = 27.2;
+						TestTargetID = 000000000000000100000000;
 					};
 					D2F879B1306C5AA6000F7B04 = {
 						CreatedOnToolsVersion = 27.2;
@@ -520,6 +531,11 @@
 			isa = PBXTargetDependency;
 			target = D2F2346E30746CBE00AA9DC4 /* BannerSharedKit */;
 			targetProxy = D2F2347330746CBE00AA9DC4 /* PBXContainerItemProxy */;
+		};
+		BA4400000000000000000003 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000100000000 /* MyApp */;
+			targetProxy = BA4400000000000000000002 /* PBXContainerItemProxy */;
 		};
 		D2F879B7306C5AA6000F7B04 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -986,10 +1002,11 @@
 		D2F879A9306C57DA000F7B04 /* Debug configuration for PBXNativeTarget "MyAppTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.yourcompany.MyAppTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1000,16 +1017,18 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/StadiaTV.app/StadiaTV";
 			};
 			name = Debug;
 		};
 		D2F879AA306C57DA000F7B04 /* Release configuration for PBXNativeTarget "MyAppTests" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.yourcompany.MyAppTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1020,6 +1039,7 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/StadiaTV.app/StadiaTV";
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;

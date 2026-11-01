@@ -7,7 +7,7 @@ final class BannerFoundationDiscoveryTests: XCTestCase {
         XCTAssertThrowsError(try BannerNHLFeed.decode(#"{"version":9,"games":[]}"#))
     }
 
-    func testRealSharedNHLDiscoveryPreservesAppleNavigationIDs() async throws {
+    @MainActor func testRealSharedNHLDiscoveryPreservesAppleNavigationIDs() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["BANNER_LIVE_PROBE"] == "1", "Explicit live integration run")
         let provider = NHLProvider()
         XCTAssertTrue(provider.usesSharedDiscovery)
