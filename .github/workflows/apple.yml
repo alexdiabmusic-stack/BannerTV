@@ -50,10 +50,17 @@ jobs:
           xcodebuild -version
           scripts/check-nhl-contract.sh
       - name: Build original native route, then test shared route and real NHL request
-        run: apple/scripts/verify-foundation.sh
+        id: discovery
+        run: BANNER_XCODE_SCRATCH="$RUNNER_TEMP/banner-xcode" apple/scripts/verify-foundation.sh discovery
       - name: Build Apple frameworks and run simulator contracts
         run: >-
           ./gradlew :shared:iosSimulatorArm64Test :shared:linkDebugFrameworkIosArm64
           :shared:linkDebugFrameworkIosSimulatorArm64 :shared:linkDebugFrameworkMacosArm64
           :shared:linkDebugFrameworkTvosArm64 :shared:linkDebugFrameworkTvosSimulatorArm64
           -PpublicBuild=true
+      - name: Run original MyApp unit test scheme
+        if: ${{ !cancelled() && steps.discovery.outcome == 'success' }}
+        run: BANNER_XCODE_SCRATCH="$RUNNER_TEMP/banner-xcode" apple/scripts/verify-foundation.sh app-tests
+      - name: Run auxiliary Apple regressions
+        if: ${{ !cancelled() && steps.discovery.outcome == 'success' }}
+        run: BANNER_XCODE_SCRATCH="$RUNNER_TEMP/banner-xcode" apple/scripts/verify-foundation.sh auxiliary-tests

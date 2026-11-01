@@ -9,28 +9,50 @@ for line in sys.stdin:
     if "platform:iOS Simulator" in line and "name:iPhone" in line and match:
         print(match[1]);break
 else: raise SystemExit("An available iPhone simulator is required")' <<< "$list")
-scratch=$(mktemp -d "${TMPDIR:-/tmp}/banner-xcode.XXXXXX")
+if [[ -n "${BANNER_XCODE_SCRATCH:-}" ]]; then
+    scratch=$BANNER_XCODE_SCRATCH
+    mkdir -p "$scratch"
+else
+    scratch=$(mktemp -d "${TMPDIR:-/tmp}/banner-xcode.XXXXXX")
+fi
 common=(-project 'Stadia TV.xcodeproj' -configuration Debug -destination "id=$destination" CODE_SIGNING_ALLOWED=NO)
-xcodebuild build -scheme MyApp "${common[@]}" -derivedDataPath "$scratch/native" BANNER_KMP_ENABLED=NO
-TEST_RUNNER_BANNER_LIVE_PROBE=1 xcodebuild test -scheme MyApp "${common[@]}" \
-    -derivedDataPath "$scratch/shared" BANNER_KMP_ENABLED=YES -parallel-testing-enabled NO \
-    -only-testing:MyAppUnitTests/BannerFoundationDiscoveryTests/testRealSharedNHLDiscoveryPreservesAppleNavigationIDs \
-    -resultBundlePath "$scratch/live.xcresult"
-xcrun xcresulttool get test-results tests --path "$scratch/live.xcresult" > "$scratch/live.json"
-python3 - "$scratch/live.json" <<'PY'
+verify_discovery() {
+    xcodebuild build -scheme MyApp "${common[@]}" -derivedDataPath "$scratch/native" BANNER_KMP_ENABLED=NO
+    TEST_RUNNER_BANNER_LIVE_PROBE=1 xcodebuild test -scheme MyApp "${common[@]}" \
+        -derivedDataPath "$scratch/shared" BANNER_KMP_ENABLED=YES -parallel-testing-enabled NO \
+        -only-testing:MyAppUnitTests/BannerFoundationDiscoveryTests/testRealSharedNHLDiscoveryPreservesAppleNavigationIDs \
+        -only-testing:MyAppUnitTests/BannerFoundationDiscoveryTests/testSharedScorePreservesTheNativeMatchUsedForNavigationAndPlayback \
+        -resultBundlePath "$scratch/live.xcresult"
+    xcrun xcresulttool get test-results tests --path "$scratch/live.xcresult" > "$scratch/live.json"
+    python3 - "$scratch/live.json" <<'PY'
 import json,sys
-def passed(node):
+def passed(node, required):
     if isinstance(node, list):
-        return any(passed(child) for child in node)
+        return any(passed(child, required) for child in node)
     if isinstance(node, dict):
         name = str(node.get("name","")) + str(node.get("nodeIdentifier",""))
-        if "testRealSharedNHLDiscoveryPreservesAppleNavigationIDs" in name and node.get("result") == "Passed":
+        if required in name and node.get("result") == "Passed":
             return True
-        return any(passed(child) for child in node.values())
+        return any(passed(child, required) for child in node.values())
     return False
 with open(sys.argv[1]) as f:
-    if not passed(json.load(f)):
-        raise SystemExit("The real Swift-to-Kotlin NHL test must execute and pass.")
+    nodes = json.load(f)
+    for name in ("testRealSharedNHLDiscoveryPreservesAppleNavigationIDs",
+                 "testSharedScorePreservesTheNativeMatchUsedForNavigationAndPlayback"):
+        if not passed(nodes, name):
+            raise SystemExit(f"{name} must execute and pass.")
 PY
-xcodebuild test -scheme BannerRegression "${common[@]}" -derivedDataPath "$scratch/shared" BANNER_KMP_ENABLED=YES \
-    -only-testing:MyAppTests -only-testing:MyAppUnitTests -parallel-testing-enabled NO
+}
+
+verify_tests() {
+    xcodebuild test -scheme "$1" "${common[@]}" -derivedDataPath "$scratch/shared" BANNER_KMP_ENABLED=YES \
+        "-only-testing:$2" -parallel-testing-enabled NO
+}
+
+case "${1:-all}" in
+    discovery) verify_discovery ;;
+    app-tests) verify_tests MyApp MyAppUnitTests ;;
+    auxiliary-tests) verify_tests BannerRegression MyAppTests ;;
+    all) verify_discovery; verify_tests MyApp MyAppUnitTests; verify_tests BannerRegression MyAppTests ;;
+    *) echo "Use discovery, app-tests, auxiliary-tests or all." >&2; exit 2 ;;
+esac
