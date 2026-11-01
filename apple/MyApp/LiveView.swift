@@ -1,0 +1,854 @@
+import SwiftUI
+import Combine
+
+// MARK: - Live Tab
+
+struct LiveView: View {
+    @EnvironmentObject private var prefs: PreferencesStore
+    @EnvironmentObject private var viewModel: LiveViewModel
+    @EnvironmentObject private var fantasyStore: FantasyStore
+    @EnvironmentObject private var nativeFantasyStore: BannerFantasyStore
+    @EnvironmentObject private var streamStore: StreamAvailabilityStore
+    @AppStorage("live.filter.v1") private var savedFilterRaw: String = LiveFilter.forYou.rawValue
+    @State private var filter: LiveFilter = .forYou
+    @State private var selectedSport: SportGroup?
+    @State private var hiddenMatchIDs: Set<String> = []
+    @State private var showingActionAlert = false
+    @State private var actionAlertMessage = ""
+    /// Channels | Guide | Sports, remembered across launches.
+    @AppStorage("live.section.v1") private var sectionRaw: String = LiveSection.channels.rawValue
+
+    var body: some View {
+        NavigationStack {
+            content
+                .background(Theme.background.ignoresSafeArea())
+                .navigationTitle("Live")
+                #if os(iOS)
+            .navigationBarTitleDisplayMode(.large)
+            #endif
+                #if os(iOS) || os(tvOS)
+                .toolbarBackground(Theme.background, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+                #endif
+                .toolbar {
+                    ToolbarItemGroup(placement: .compatTopBarTrailing) {
+                        NavigationLink(destination: SearchView()) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: Theme.isMac ? Theme.Mac.Header.searchIconSize : 17))
+                                .foregroundStyle(Theme.textPrimary)
+                                .frame(width: Theme.isMac ? Theme.Mac.Header.searchSize : nil,
+                                       height: Theme.isMac ? Theme.Mac.Header.searchSize : nil)
+                                .background(Theme.isMac ? Theme.surfaceElevated : Color.clear, in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Search")
+                    }
+                }
+                .navigationDestination(for: Match.self) { MatchDetailView(match: $0) }
+        }
+        .tint(Theme.accent)
+        .task {
+            // The Guide used to be a filter chip; it's a section now.
+            if savedFilterRaw == LiveFilter.guide.rawValue {
+                savedFilterRaw = LiveFilter.forYou.rawValue
+                sectionRaw = LiveSection.guide.rawValue
+            }
+            filter = LiveFilter(rawValue: savedFilterRaw) ?? .forYou
+            await viewModel.load(favoriteTeams: prefs.favoriteTeams)
+            viewModel.startAutoRefresh(favoriteTeams: prefs.favoriteTeams)
+        }
+        .onChange(of: filter) { _, new in savedFilterRaw = new.rawValue }
+        .onDisappear { viewModel.stopAutoRefresh() }
+        .alert("Live", isPresented: $showingActionAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(actionAlertMessage)
+        }
+    }
+
+    private var section: LiveSection {
+        LiveSection(rawValue: sectionRaw) ?? .channels
+    }
+
+    private var content: some View {
+        VStack(spacing: 0) {
+            Picker("Section", selection: Binding(
+                get: { section },
+                set: { newValue in
+                    #if os(iOS)
+                    Haptic.selection()
+                    #endif
+                    sectionRaw = newValue.rawValue
+                }
+            )) {
+                ForEach(LiveSection.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, Theme.Spacing.md)
+            .padding(.vertical, Theme.Spacing.xs)
+            .background(Theme.background)
+
+            switch section {
+            case .channels:
+                LiveChannelsView()
+            case .guide:
+                TVGuideView()
+            case .sports:
+                sportsContent
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sportsContent: some View {
+        if viewModel.isLoading && viewModel.allLive.isEmpty {
+            loadingView
+        } else {
+            VStack(spacing: 0) {
+                filterStrip
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+                    .background(Theme.background)
+                Divider().overlay(Theme.hairline)
+                liveList
+            }
+        }
+    }
+
+    private var loadingView: some View {
+        ContentSkeleton(kind: .games)
+    }
+
+    private var liveList: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 20) {
+                if filter == .forYou {
+                    let n = displayedMatches.count
+                    if n > 0 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "star.fill")
+                                .font(.caption.weight(.bold))
+                            Text(n == 1 ? "1 of your teams is live" : "\(n) of your teams are live")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .foregroundStyle(Theme.accent)
+                    }
+                } else if !viewModel.allLive.isEmpty {
+                    Text(viewModel.allLive.count == 1 ? "1 game currently live" : "\(viewModel.allLive.count) games currently live")
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+
+                sportNavigator
+
+                // Live games beside what's starting soon once the window is wide enough.
+                AdaptiveTwoPane(spacing: 20, hasSecondary: !viewModel.startingSoon.isEmpty) {
+                    if visibleMatches.isEmpty {
+                        emptyState
+                    } else if selectedSport != nil {
+                        ForEach(visibleMatches) { match in
+                                LiveMatchCard(
+                                    match: match,
+                                    onSetAlert: { Task { await setAlert(for: match) } },
+                                    onAddToCalendar: { Task { await addToCalendar(match) } },
+                                    onHide: { hide(match) },
+                                    showScoreBar: prefs.showLiveScoreBar,
+                                    fantasyContext: liveFantasyContext(for: match),
+                                    streamCount: streamStore.count(for: match.id)
+                                )
+                                .buttonStyle(.plain)
+                        }
+                    } else {
+                        ForEach(groupedSports, id: \.self) { group in
+                            let groupMatches = visibleMatches.filter { $0.league.group == group }
+                            if !groupMatches.isEmpty {
+                                liveSportSection(sport: group, matches: groupMatches)
+                            }
+                        }
+                    }
+
+                } secondary: {
+                    if !viewModel.startingSoon.isEmpty {
+                        startingSoonSection
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+        }
+        .refreshable {
+            await viewModel.load(favoriteTeams: prefs.favoriteTeams, force: true)
+        }
+    }
+
+    private var visibleMatches: [Match] {
+        guard let sport = selectedSport else { return displayedMatches }
+        return displayedMatches.filter { $0.league.group == sport }
+    }
+
+    @ViewBuilder
+    private var sportNavigator: some View {
+        let sports = groupedSports
+        if sports.count > 1 {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    sportNavChip(nil, label: "All")
+                    ForEach(sports, id: \.self) { sport in
+                        sportNavChip(sport, label: sport.rawValue)
+                    }
+                }
+            }
+        }
+    }
+
+    private func sportNavChip(_ sport: SportGroup?, label: String) -> some View {
+        Button {
+            #if os(iOS)
+            Haptic.selection()
+            #endif
+            withAnimation(Theme.Motion.snappy) { selectedSport = sport }
+        } label: {
+            HStack(spacing: 4) {
+                if let sport {
+                    Image(systemName: sport.systemImage)
+                        .font(.caption2.weight(.bold))
+                }
+                Text(label)
+                    .font(.caption.weight(.bold))
+            }
+            .foregroundStyle(selectedSport == sport ? .white : Theme.textSecondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(selectedSport == sport ? Theme.accent.opacity(0.9) : Theme.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(selectedSport == sport ? Theme.accent : Theme.hairline))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var filterStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(LiveFilter.allCases.filter { $0 != .guide }) { f in
+                    filterChip(f)
+                }
+            }
+        }
+    }
+
+    private func filterChip(_ f: LiveFilter) -> some View {
+        Button {
+            #if os(iOS)
+            Haptic.selection()
+            #endif
+            withAnimation(Theme.Motion.snappy) { filter = f }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: f.icon)
+                    .font(.caption2.weight(.bold))
+                Text(f.label)
+                    .font(.subheadline.weight(.semibold))
+            }
+            .foregroundStyle(filter == f ? .white : Theme.textSecondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(filter == f ? f.activeColor : Theme.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(filter == f ? f.activeColor : Theme.hairline))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var displayedMatches: [Match] {
+        let base: [Match]
+        switch filter {
+        case .forYou:
+            // Personalize the order while keeping sports discovery useful for new users.
+            base = viewModel.allLive.sorted { lhs, rhs in
+                let left = prefs.isFavoriteMatch(lhs)
+                let right = prefs.isFavoriteMatch(rhs)
+                if left != right { return left }
+                let leftFollowed = prefs.followedLeagues.contains(lhs.league)
+                let rightFollowed = prefs.followedLeagues.contains(rhs.league)
+                if leftFollowed != rightFollowed { return leftFollowed }
+                return lhs.date == rhs.date ? lhs.id < rhs.id : lhs.date < rhs.date
+            }
+        case .all:
+            base = viewModel.allLive
+        case .guide:
+            return []
+        }
+        return base.filter { !hiddenMatchIDs.contains($0.id) }
+    }
+
+    private var groupedSports: [SportGroup] {
+        var seen: [SportGroup] = []
+        for match in displayedMatches {
+            if !seen.contains(match.league.group) { seen.append(match.league.group) }
+        }
+        return seen
+    }
+
+    private func liveSportSection(sport: SportGroup, matches: [Match]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: sport.systemImage)
+                    .font(.caption.weight(.bold))
+                Text(sport.rawValue.uppercased())
+                    .font(.footnote.weight(.semibold))
+                Spacer()
+                Text("\(matches.count) LIVE")
+                    .font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(Theme.live)
+
+            ForEach(matches) { match in
+                    LiveMatchCard(
+                        match: match,
+                        onSetAlert: { Task { await setAlert(for: match) } },
+                        onAddToCalendar: { Task { await addToCalendar(match) } },
+                        onHide: { hide(match) },
+                        showScoreBar: prefs.showLiveScoreBar,
+                        streamCount: streamStore.count(for: match.id)
+                    )
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private var startingSoonSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "clock.badge.fill")
+                Text("STARTING SOON")
+                    .font(.footnote.weight(.semibold))
+            }
+            .foregroundStyle(Theme.starting)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(viewModel.startingSoon.prefix(8)) { match in
+                        NavigationLink(value: match) {
+                            CompactSoonCard(match: match)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "sportscourt")
+                .font(.system(size: 44))
+                .foregroundStyle(Theme.textSecondary.opacity(0.4))
+
+            if filter == .forYou {
+                Text("None of your teams are live.")
+                    .font(.headline)
+                    .foregroundStyle(Theme.textPrimary)
+                if !viewModel.allLive.isEmpty {
+                    Text("\(viewModel.allLive.count) other games are live.")
+                        .font(.callout)
+                        .foregroundStyle(Theme.textSecondary)
+                    Button("See All Live") {
+                        withAnimation(Theme.Motion.snappy) { filter = .all }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+                }
+            } else {
+                Text("Nothing is live right now.")
+                    .font(.headline)
+                    .foregroundStyle(Theme.textPrimary)
+                if !viewModel.startingSoon.isEmpty {
+                    Text("The next game starts in \(countdown(to: viewModel.startingSoon[0].date)).")
+                        .font(.callout)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+        }
+        .multilineTextAlignment(.center)
+        .padding(.vertical, 40)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func involvesFavorite(_ match: Match, favIDs: Set<String>, favNames: Set<String>) -> Bool {
+        for side in [match.home, match.away] {
+            if let tid = side.teamID, favIDs.contains("\(match.league.path)-\(tid)") { return true }
+            if let canonicalID = side.canonicalIDString, favIDs.contains(canonicalID) { return true }
+            if favNames.contains(side.displayName.lowercased()) { return true }
+        }
+        return false
+    }
+
+    private func liveFantasyContext(for match: Match) -> [FantasyPlayerGame] {
+        guard fantasyStore.settings.showFantasyIndicatorsInLive else { return [] }
+        return (fantasyStore.fantasyEventContext(for: match)?.playerGames ?? []) + (nativeFantasyStore.fantasyEventContext(for: match)?.playerGames ?? [])
+    }
+
+    private func isClose(_ match: Match) -> Bool {
+        guard let h = match.home.score.flatMap(Int.init),
+              let a = match.away.score.flatMap(Int.init) else { return false }
+        let diff = abs(h - a)
+        switch match.league.group {
+        case .soccer, .hockey: return diff <= 1
+        case .basketball: return diff <= 10
+        case .baseball: return diff <= 3
+        case .football: return diff <= 8
+        case .golf, .racing, .tennis, .cycling, .wrestling, .esports: return false
+        }
+    }
+
+    private func countdown(to date: Date) -> String {
+        let secs = max(0, Int(date.timeIntervalSinceNow))
+        let h = secs / 3600; let m = (secs % 3600) / 60
+        if h > 0 { return "\(h)h \(m)m" }
+        return "\(m) min"
+    }
+
+    private func setAlert(for match: Match) async {
+        let scheduled = await MatchNotificationService.shared.scheduleReminder(for: match, leadTime: prefs.matchReminderLeadTime)
+        if scheduled {
+            prefs.setMatchNotificationsEnabled(true)
+        } else if !(await MatchNotificationService.shared.isAuthorized()) {
+            // A finished game can't be reminded about; only a revoked permission turns alerts off.
+            prefs.setMatchNotificationsEnabled(false)
+        }
+        actionAlertMessage = scheduled
+            ? (match.state == .live ? "Live alert sent for \(match.shortName)." : "Alert set for \(match.shortName).")
+            : (match.state == .final ? "\(match.shortName) is already final." : "Notifications are disabled. Enable them in Settings to receive game alerts.")
+        showingActionAlert = true
+    }
+
+    private func addToCalendar(_ match: Match) async {
+        #if canImport(EventKit)
+        do {
+            let saved = try await MatchCalendarService.shared.add(matches: [match])
+            actionAlertMessage = saved == 1 ? "Added \(match.shortName) to Calendar." : "No calendar event was added."
+        } catch {
+            actionAlertMessage = error.localizedDescription
+        }
+        #else
+        actionAlertMessage = "Calendar export is not available on this device."
+        #endif
+        showingActionAlert = true
+    }
+
+    private func hide(_ match: Match) {
+        hiddenMatchIDs.insert(match.id)
+    }
+}
+
+// MARK: - Live Match Card
+
+struct LiveMatchCard: View {
+    let match: Match
+    let onSetAlert: () -> Void
+    let onAddToCalendar: () -> Void
+    let onHide: () -> Void
+    var showScoreBar: Bool = false
+    var fantasyContext: [FantasyPlayerGame] = []
+    var streamCount: Int = 0
+    @EnvironmentObject private var streamStore: StreamAvailabilityStore
+    @State private var showingQuickStream = false
+    @State private var playbackContext: MatchPlaybackContext?
+
+    private var fantasyLabel: String? {
+        guard !fantasyContext.isEmpty else { return nil }
+        if fantasyContext.count == 1, let player = fantasyContext.first {
+            return "★ \(player.fantasyPlayer.fullName)"
+        }
+        return "★ \(fantasyContext.count) Fantasy players"
+    }
+
+    private var intelligenceLabel: String? {
+        guard match.state == .live,
+              let h = match.home.score.flatMap(Int.init),
+              let a = match.away.score.flatMap(Int.init) else { return nil }
+        let diff = abs(h - a)
+        let status = match.statusDetail.lowercased()
+        switch match.league.group {
+        case .baseball:
+            if ["10th","11th","12th","13th","14th","15th","extra"].contains(where: { status.contains($0) }) { return "EXTRA INNINGS" }
+            if diff == 0 { return "TIED" }
+            if diff == 1 { return "ONE-RUN GAME" }
+        case .basketball:
+            if status.contains("ot") { return "OVERTIME" }
+            if diff <= 5 { return "CLOSE GAME" }
+        case .hockey:
+            if status.contains("ot") { return "OVERTIME" }
+            if diff == 0 { return "TIED" }
+            if diff <= 1 { return "ONE-GOAL GAME" }
+        case .soccer:
+            if diff == 0 { return "LEVEL" }
+            if diff <= 1 { return "CLOSE MATCH" }
+        case .football:
+            if status.contains("ot") { return "OVERTIME" }
+            if diff <= 3 { return "FIELD GOAL GAME" }
+            if diff <= 8 { return "ONE-SCORE GAME" }
+        default: break
+        }
+        return nil
+    }
+
+    private var archetype: GameCentreArchetype {
+        GameCentreArchetype(match: match)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.isMac ? 6 : 10) {
+            NavigationLink(value: match) {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(match.league.shortName)
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                        if let label = intelligenceLabel {
+                            Text(label)
+                                .font(Theme.Typography.overline)
+                                .foregroundStyle(Theme.starting)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        LiveBadge()
+                    }
+                    eventSummaryRow
+                    Text(BroadcastPresentation.status(match.statusDetail))
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    if let fantasyLabel {
+                        Text(fantasyLabel)
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(Theme.accessibleAccent)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Divider().overlay(Theme.hairline)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    broadcastLabel
+                    Spacer(minLength: 8)
+                    watchAction
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    broadcastLabel
+                    watchAction
+                }
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, Theme.isMac ? 10 : 16)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous).strokeBorder(Theme.hairline))
+        .overlay(alignment: .top) {
+            if showScoreBar {
+                Rectangle()
+                    .fill(Theme.live)
+                    .frame(height: 2)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous))
+            }
+        }
+        .contextMenu {
+            Button("Set alert", systemImage: "bell") { onSetAlert() }
+            Button("Add to Calendar", systemImage: "calendar.badge.plus") { onAddToCalendar() }
+            Divider()
+            Button("Hide", systemImage: "eye.slash", role: .destructive) { onHide() }
+        }
+        .fullScreenCoverCompat(item: $playbackContext) { context in
+            #if os(tvOS)
+            TVMatchDetailView(match: context.match)
+            #else
+            PlayerView(context: context)
+            #endif
+        }
+        .sheet(isPresented: $showingQuickStream) {
+            #if os(tvOS)
+            TVMatchDetailView(match: match)
+            #else
+            QuickStreamSheet(
+                match: match,
+                sources: streamStore.topRanked(for: match.id)
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            #endif
+        }
+    }
+
+    private var broadcastLabel: some View {
+        Text(BroadcastPresentation.networks(match.broadcasts))
+            .font(Theme.Typography.caption)
+            .foregroundStyle(Theme.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private var watchAction: some View {
+        if streamStore.confirmedCount(for: match.id) > 0 {
+            Button {
+                let sources = streamStore.topRanked(for: match.id, limit: 100).filter(\.isConfirmed)
+                if sources.count > 1 {
+                    showingQuickStream = true
+                } else if let source = sources.first {
+                    PlaybackTapClock.record()
+                    playbackContext = MatchPlaybackContext(match: match, channel: source.channel, rankedSources: sources)
+                }
+            } label: {
+                Label("Watch", systemImage: "play.fill")
+                    .font(Theme.Typography.caption)
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 44)
+                    .background(Theme.accent.opacity(0.18), in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+            }
+            .foregroundStyle(Theme.accessibleAccent)
+            .buttonStyle(.plain)
+
+        } else if streamCount > 0 {
+            Button("Find streams") { showingQuickStream = true }
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.accessibleAccent)
+                .frame(minHeight: 44)
+                .buttonStyle(.plain)
+        } else {
+            Text("No matched stream")
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.textSecondary)
+        }
+    }
+
+    @ViewBuilder
+    private var eventSummaryRow: some View {
+        switch archetype {
+        case .golf:
+            VStack(alignment: .leading, spacing: 6) {
+                Text(match.name.isEmpty ? match.league.name : match.name)
+                    .font(Theme.Typography.headline)
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(2)
+                golfLeaderLine
+            }
+        case .motorsport:
+            VStack(alignment: .leading, spacing: 6) {
+                Text(match.name.isEmpty ? match.league.name : match.name)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(2)
+                if !match.away.displayName.isEmpty, match.away.displayName != "TBD" {
+                    Label("Leader: \(match.away.shortName)", systemImage: "flag.checkered")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+        case .combatSport:
+            Text(match.name.isEmpty ? match.league.name : match.name)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(2)
+        case .teamSport, .tennis:
+            headToHeadScoreRow
+        }
+    }
+
+    @ViewBuilder
+    private var golfLeaderLine: some View {
+        let leaders = [match.away, match.home]
+            .filter { !$0.displayName.isEmpty && $0.displayName != "Field" && $0.displayName != "TBD" }
+        if !leaders.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "flag.fill")
+                    .font(.caption2)
+                Text(leaders.prefix(2).map { side in
+                    [side.shortName, side.score].compactMap { $0 }.joined(separator: " ")
+                }.joined(separator: " · "))
+                .lineLimit(1)
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(Theme.textSecondary)
+        }
+    }
+
+    private var headToHeadScoreRow: some View {
+        GameScoreRow(match: match, showsScore: true)
+    }
+
+}
+
+// MARK: - Compact Soon Card
+
+private struct CompactSoonCard: View {
+    let match: Match
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { ctx in
+            let secs = max(0, Int(match.date.timeIntervalSince(ctx.date)))
+            let h = secs / 3600; let m = (secs % 3600) / 60
+
+            VStack(spacing: 8) {
+                if GameCentreArchetype(match: match).usesHeadToHeadParticipantUI {
+                    HStack(spacing: 4) {
+                        TeamLogo(url: match.leadingSide.logoURL, size: 26)
+                        Text("vs").font(.caption2).foregroundStyle(Theme.textSecondary)
+                        TeamLogo(url: match.trailingSide.logoURL, size: 26)
+                    }
+                } else {
+                    Image(systemName: match.league.group.systemImage)
+                        .font(.title2)
+                        .foregroundStyle(Theme.accessibleAccent)
+                }
+                Text(match.shortName)
+                    .font(Theme.isMac ? .system(size: Theme.Mac.Typography.body, weight: .semibold) : .caption.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .frame(width: 110)
+                Text(h > 0 ? "\(h)h \(m)m" : "\(m) min")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(m < 10 && h == 0 ? Theme.live : Theme.starting)
+                Text(match.league.shortName)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.horizontal, Theme.isMac ? 14 : 12)
+            .padding(.vertical, 12)
+            .frame(width: Theme.isMac ? 150 : 130)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous).strokeBorder(Theme.hairline))
+        }
+    }
+}
+
+// MARK: - Pulsing Live Badge
+
+struct PulsingLiveBadge: View {
+    var body: some View {
+        Circle()
+            .fill(Theme.live)
+            .frame(width: 8, height: 8)
+            .modifier(GentlePulse())
+            .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Filter
+
+enum LiveSection: String, CaseIterable, Identifiable {
+    case channels, guide, sports
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .channels: return "Channels"
+        case .guide: return "Guide"
+        case .sports: return "Sports"
+        }
+    }
+}
+
+enum LiveFilter: String, CaseIterable, Identifiable {
+    case forYou = "forYou"
+    case all    = "all"
+    case guide  = "guide"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .forYou: return "For You"
+        case .all:    return "All Live"
+        case .guide:  return "Guide"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .forYou: return "star.fill"
+        case .all:    return "circle.fill"
+        case .guide:  return "tv"
+        }
+    }
+
+    var activeColor: Color {
+        switch self {
+        case .forYou: return Theme.accent
+        case .all:    return Theme.accent
+        case .guide:  return Theme.accent
+        }
+    }
+}
+
+// MARK: - Live View Model
+
+@MainActor
+final class LiveViewModel: ObservableObject {
+    @Published private(set) var allLive: [Match] = []
+    @Published private(set) var startingSoon: [Match] = []
+    @Published private(set) var isLoading = false
+
+    private var refreshTask: Task<Void, Never>?
+    private var lastLoaded: Date?
+    private let cacheLifetime: TimeInterval = 60
+    private var refreshClientCount = 0
+
+    func load(favoriteTeams: [FavoriteTeam], force: Bool = false) async {
+        // Don't honor the cache window when we currently have nothing to show — an empty
+        // result from a bad fetch (or from checking before anything went live yet) would
+        // otherwise sit there un-refreshed for the full cache window every time this tab
+        // reappears, even while other screens querying the same data already have real
+        // matches.
+        let hasData = !allLive.isEmpty
+        if !force, hasData, let last = lastLoaded, Date().timeIntervalSince(last) < cacheLifetime { return }
+        guard !isLoading else { return }
+        isLoading = true
+
+        let snapshot = await SportsRepository.shared.liveMatchSnapshot(
+            leagues: League.all,
+            startingSoonWindow: 4 * 3600,
+            nextLimit: 0
+        )
+
+        allLive = snapshot.live
+            .sorted { score($0, favTeams: favoriteTeams) > score($1, favTeams: favoriteTeams) }
+        startingSoon = snapshot.startingSoon
+
+        isLoading = false
+        lastLoaded = Date()
+    }
+
+    func startAutoRefresh(favoriteTeams: [FavoriteTeam]) {
+        refreshClientCount += 1
+        guard refreshClientCount == 1 else { return }
+        refreshTask?.cancel()
+        refreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                guard !Task.isCancelled, let self, AppActivity.shared.isActive else { continue }
+                await self.load(favoriteTeams: favoriteTeams, force: true)
+            }
+        }
+    }
+
+    func stopAutoRefresh() {
+        refreshClientCount = max(0, refreshClientCount - 1)
+        guard refreshClientCount == 0 else { return }
+        refreshTask?.cancel()
+        refreshTask = nil
+    }
+
+    private func score(_ match: Match, favTeams: [FavoriteTeam]) -> Int {
+        let favIDs = Set(favTeams.map(\.id))
+        let canonicalFavIDs = Set(favTeams.map(\.canonicalTeamID))
+        let favNames = Set(favTeams.map { $0.displayName.lowercased() })
+        var s = 0
+        for side in [match.home, match.away] {
+            if let tid = side.teamID, favIDs.contains("\(match.league.path)-\(tid)") { s += 50 }
+            if let canonicalID = side.canonicalIDString, canonicalFavIDs.contains(canonicalID) { s += 50 }
+            if favNames.contains(side.displayName.lowercased()) { s += 50 }
+        }
+        return s
+    }
+}

@@ -1,0 +1,148 @@
+import SwiftUI
+
+/// Root onboarding coordinator. Manages step routing, back navigation, and commit.
+struct OnboardingView: View {
+    @EnvironmentObject private var prefs: PreferencesStore
+    @EnvironmentObject private var playlists: PlaylistStore
+
+    @State private var choosingExperience = false
+    @State private var step: OnboardingStep = .welcome
+    @State private var store = OnboardingStore()
+    @State private var sportPendingDeselect: CatalogSport?
+    @State private var showDeselectAlert = false
+    @State private var showNothingToRestoreAlert = false
+
+    var body: some View {
+        ZStack {
+            Theme.background.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                if step != .welcome {
+                    OnboardingProgressBar(step: step)
+                }
+
+                stepContent
+                    .frame(maxWidth: step == .welcome ? .infinity : 900)
+                    .frame(maxWidth: .infinity)
+                    .frame(maxHeight: .infinity)
+
+                if step != .welcome {
+                    OnboardingBottomBar(
+                        step: step,
+                        canContinue: canContinue,
+                        continueLabel: continueLabel,
+                        onBack: goBack,
+                        onContinue: goForward
+                    )
+                }
+            }
+        }
+        .sheet(isPresented: $choosingExperience) {
+            NavigationStack {
+                ViewingExperienceSettingsView()
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Continue") {
+                                choosingExperience = false
+                                step = prefs.viewingExperience == .liveTV ? .watch : .sports
+                            }
+                        }
+                    }
+            }
+        }
+        .tint(Theme.accent)
+        .providesAdaptiveLayoutContext()
+        .alert("Remove \(sportPendingDeselect?.name ?? "")?",
+               isPresented: $showDeselectAlert,
+               presenting: sportPendingDeselect) { sport in
+            Button("Remove", role: .destructive) {
+                store.deselectSport(sport)
+            }
+            Button("Keep", role: .cancel) {}
+        } message: { sport in
+            Text("This will also remove your \(sport.name) league selections and any favorite teams.")
+        }
+        .alert("Nothing to restore yet", isPresented: $showNothingToRestoreAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("BannerTV couldn't find saved settings in iCloud. They appear once iCloud Sync is on in Settings on your other device, and can take a moment to arrive. Try again shortly, or tap Get Started to set up here.")
+        }
+    }
+
+    // MARK: - Step content
+
+    @ViewBuilder
+    private var stepContent: some View {
+        switch step {
+        case .welcome:
+            WelcomeView(
+                onGetStarted: { choosingExperience = true },
+                onRestore: { if !prefs.restorePreferencesFromCloud() { showNothingToRestoreAlert = true } }
+            )
+        case .sports:
+            SportsSelectionView(
+                store: store,
+                onSportDeselect: { sport in
+                    sportPendingDeselect = sport
+                    showDeselectAlert = true
+                }
+            )
+        case .favorites:
+            FavoriteEntitiesView(store: store)
+        case .watch:
+            WatchSetupView(onSkip: commit)
+        }
+    }
+
+    // MARK: - Navigation
+
+    private var canContinue: Bool {
+        switch step {
+        case .sports: return store.hasAtLeastOneSport
+        default: return true
+        }
+    }
+
+    private var continueLabel: String {
+        switch step {
+        case .watch: return "Start watching"
+        default: return "Continue"
+        }
+    }
+
+    private func goForward() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            switch step {
+            case .welcome:
+                step = .sports
+            case .sports:
+                step = store.hasFavoriteScreenContent ? .favorites : .watch
+            case .favorites:
+                step = .watch
+            case .watch:
+                commit()
+            }
+        }
+    }
+
+    private func goBack() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            switch step {
+            case .sports:
+                step = .welcome
+            case .favorites:
+                step = .sports
+            case .watch:
+                if prefs.viewingExperience == .liveTV { choosingExperience = true }
+                else { step = store.hasFavoriteScreenContent ? .favorites : .sports }
+            case .welcome:
+                break
+            }
+        }
+    }
+
+    private func commit() {
+        if prefs.viewingExperience == .liveTV { prefs.completeOnboarding() }
+        else { store.commit(to: prefs) }
+    }
+}

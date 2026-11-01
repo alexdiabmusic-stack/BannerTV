@@ -1,0 +1,2980 @@
+import SwiftUI
+#if os(iOS)
+import UIKit
+import SafariServices
+#endif
+
+struct MatchDetailView: View {
+    let match: Match
+    @EnvironmentObject private var playlists: PlaylistStore
+    @EnvironmentObject private var prefs: PreferencesStore
+    @EnvironmentObject private var entitlements: EntitlementStore
+    @EnvironmentObject private var predictions: PredictionsStore
+    @EnvironmentObject private var fantasyStore: FantasyStore
+    @EnvironmentObject private var nativeFantasyStore: BannerFantasyStore
+    @EnvironmentObject private var epgRepository: EPGRepository
+    @EnvironmentObject private var streamStore: StreamAvailabilityStore
+    @EnvironmentObject private var eventChannelRefresh: EventChannelRefreshService
+    @State private var isShowingMoreSources = false
+    @State private var spoilerRevealed = false
+    @State private var playbackContext: MatchPlaybackContext?
+    @State private var gameSummary: GameSummary?
+    @State private var isLoadingGameSummary = false
+    @State private var didAttemptGameSummaryLoad = false
+    @State private var golfTournament: BannerGolfTournament?
+    @State private var isLoadingGolfTournament = false
+    @State private var didAttemptGolfTournamentLoad = false
+    @State private var showPaywall = false
+    @State private var browsingWatchLink: WatchLink?
+    // Ranking a big playlist is expensive, so it runs once off the main thread
+    // instead of inside every body evaluation.
+    @State private var rankedSources: [RankedSource] = []
+    @State private var isRankingSources = true
+    @State private var selectedGameCenterTeam: GameCenterTeam = .away
+    @State private var rosterPreviewByTeamID: [String: [RosterAthlete]] = [:]
+    @State private var selectedRosterPosition: String?
+    @State private var isShowingFullRosterPreview = false
+    @State private var odds: MatchOddsDisplay?
+    @State private var isLoadingOdds = false
+    @State private var showPickCelebration = false
+    @State private var gameCenterTab: GameCenterTab = .players
+    @State private var matchNews: [ESPNArticle] = []
+    @State private var presentedMatchArticle: ESPNArticle?
+    @State private var actionMessage: String?
+    @State private var showingAllMatchNews = false
+
+    private enum GameCenterTab: String, CaseIterable, Identifiable {
+        case players = "Players"
+        case gameStats = "Game Stats"
+        case standings = "Standings"
+        var id: String { rawValue }
+    }
+
+    private var gameCentreArchetype: GameCentreArchetype { GameCentreArchetype(match: match) }
+
+    private var selectedTeamID: String? {
+        (selectedGameCenterTeam == .away ? match.away : match.home).teamID
+    }
+
+    private var hasAvailableGameStats: Bool {
+        guard let gameSummary else { return false }
+        return !gameSummary.isEmpty
+    }
+
+    private var availableGameCenterTabs: [GameCenterTab] {
+        hasAvailableGameStats ? [.players, .gameStats, .standings] : [.players, .standings]
+    }
+
+    private var effectiveGameCenterTab: GameCenterTab {
+        availableGameCenterTabs.contains(gameCenterTab) ? gameCenterTab : .players
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Theme.background.ignoresSafeArea()
+            if match.league.path == "hockey/nhl" {
+                NHLGameCenterView(match: match, watchContent: { if match.state != .final { sourcesSection } }) {
+                    fantasySection
+                    picksSection
+                    matchNewsSection
+                }
+            } else if match.league.path == "baseball/mlb" {
+                MLBGameCenterView(match: match, watchContent: { if match.state != .final { sourcesSection } }) {
+                    fantasySection
+                    picksSection
+                    matchNewsSection
+                }
+            } else if match.league.path == "football/nfl" {
+                NFLGameCenterView(match: match, watchContent: { if match.state != .final { sourcesSection } }) {
+                    fantasySection
+                    picksSection
+                    matchNewsSection
+                }
+            } else if match.league.path == "football/cfl" {
+                CFLGameCenterView(match: match, watchContent: { if match.state != .final { sourcesSection } }) {
+                    fantasySection
+                    picksSection
+                    matchNewsSection
+                }
+            } else if match.league.path == "racing/f1" {
+                F1RaceCentreView(match: match, watchContent: { if match.state != .final { sourcesSection } }) {
+                    fantasySection
+                    picksSection
+                    matchNewsSection
+                }
+            } else if match.league.path == "golf/pga" {
+                GolfTournamentCentreView(match: match, watchContent: { if match.state != .final { sourcesSection } }) {
+                    fantasySection
+                    picksSection
+                    matchNewsSection
+                }
+            } else if match.league.path == "basketball/nba" {
+                BasketballGameCenterView(match: match, config: .nba, providerID: .nba, service: NBAGameCenterService(), cache: .nba,
+                    watchContent: { if match.state != .final { sourcesSection } }) {
+                    fantasySection
+                    picksSection
+                    matchNewsSection
+                }
+            } else if match.league.path == "basketball/wnba" {
+                BasketballGameCenterView(match: match, config: .wnba, providerID: .wnba, service: WNBAGameCenterService(), cache: .wnba,
+                    watchContent: { if match.state != .final { sourcesSection } }) {
+                    fantasySection
+                    picksSection
+                    matchNewsSection
+                }
+            } else if match.league.path == "soccer/eng.1" {
+                SoccerGameCentreView(match: match, leaguePath: "soccer/eng.1", providerID: .epl, providerDisplayName: "Premier League",
+                    service: EPLGameCentreService(), cache: .epl, pollingPolicy: .epl, seed: EPLLegacyMapper.seed(from:),
+                    watchContent: { if match.state != .final { sourcesSection } }) {
+                    fantasySection
+                    picksSection
+                    matchNewsSection
+                }
+            } else if match.league.path == "soccer/usa.1" {
+                SoccerGameCentreView(match: match, leaguePath: "soccer/usa.1", providerID: .mls, providerDisplayName: "MLS",
+                    service: MLSGameCentreService(), cache: .mls, pollingPolicy: .mls, seed: MLSLegacyMapper.seed(from:),
+                    watchContent: { if match.state != .final { sourcesSection } }) {
+                    fantasySection
+                    picksSection
+                    matchNewsSection
+                }
+            } else if match.league.path == "soccer/uefa.champions", let seed = ChampionsLeagueMapper.seed(from: match) {
+                SoccerGameCentreView(match: match, leaguePath: match.league.path, providerID: .fotmob, providerDisplayName: "FotMob",
+                    service: ChampionsLeagueGameCentreService(base: seed), cache: .championsLeague,
+                    pollingPolicy: SoccerPollingPolicy(live: 30, halftime: 30, pregameWithin15Min: 60, pregameWithin1Hour: 120, pregameBeyond1Hour: 300, delayedOrSuspended: 60, fallback: 120),
+                    availableTabs: [.overview, .timeline, .lineups, .stats],
+                    seed: ChampionsLeagueMapper.seed(from:),
+                    watchContent: { if match.state != .final { sourcesSection } }) {
+                    matchNewsSection
+                }
+            } else if match.league.path == "soccer/esp.1" {
+                SoccerGameCentreView(match: match, leaguePath: "soccer/esp.1", providerID: .laliga, providerDisplayName: "La Liga",
+                    service: LaLigaGameCentreService(officialSource: LaLigaProvider.shared), cache: .laliga, pollingPolicy: .laliga, availableTabs: [.overview, .timeline, .lineups, .stats, .commentary, .shots],
+                    seed: LaLigaLegacyMapper.seed(from:),
+                    watchContent: { if match.state != .final { sourcesSection } }) {
+                    fantasySection
+                    picksSection
+                    matchNewsSection
+                }
+            } else {
+            ScrollView {
+                // Watch sources and the event on the left, game centre and news on the right once
+                // the window is wide enough; one stacked column otherwise (same order).
+                AdaptiveTwoPane(spacing: 16) {
+                    eventHeader
+                    if match.state != .final {
+                        sourcesSection
+                    }
+                    if gameCentreArchetype.usesHeadToHeadParticipantUI {
+                        fantasySection
+                        picksSection
+                        headToHeadSection
+                    }
+                    if match.state == .final {
+                        highlightsSection
+                        scoringSummarySection
+                    }
+                } secondary: {
+                    GameCentreContainerView(
+                        match: match,
+                        gameSummary: gameSummary,
+                        golfTournament: golfTournament,
+                        isLoadingGolfTournament: isLoadingGolfTournament,
+                        didAttemptGolfTournamentLoad: didAttemptGolfTournamentLoad,
+                        isLoadingGameSummary: isLoadingGameSummary,
+                        didAttemptGameSummaryLoad: didAttemptGameSummaryLoad,
+                        isPremium: entitlements.isPremium,
+                        showPaywall: $showPaywall,
+                        reloadGameSummary: { Task { await loadGameSummary() } }
+                    )
+                    playByPlaySection
+                    if match.state != .final {
+                        highlightsSection
+                    }
+                    matchNewsSection
+                }
+                .padding(16)
+                .padding(.bottom, 24)
+            }
+
+            }
+        }
+        .navigationTitle(match.league.name)
+        #if !os(tvOS)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) { gameActionsMenu }
+        }
+        #endif
+        .alert("Game", isPresented: Binding(get: { actionMessage != nil }, set: { if !$0 { actionMessage = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(actionMessage ?? "")
+        }
+        #if os(macOS)
+        .sheet(item: $playbackContext) { context in
+            PlayerView(context: context, showsLiveTVControls: false)
+        }
+        #else
+        .fullScreenCover(item: $playbackContext) { context in
+            PlayerView(context: context, showsLiveTVControls: false)
+        }
+        #endif
+        .sheet(isPresented: $showPaywall) {
+            PaywallView()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $browsingWatchLink) { link in
+            #if os(iOS)
+            SafariSheet(url: link.url).ignoresSafeArea()
+            #endif
+        }
+        .task(id: match.id) {
+            await loadGameSummary()
+        }
+        .task(id: match.id) {
+            await loadGolfTournament()
+        }
+        .task(id: match.id) {
+            await loadOdds()
+        }
+        .task(id: match.id) {
+            let articles = (try? await SportsRepository.shared.legacyNews(for: match.league, limit: 40)) ?? []
+            matchNews = MatchNewsRelevance.rank(articles: articles, match: match)
+        }
+        .task(id: "\(match.id)-\(playlists.channelsRevision)-\(prefs.preferredStreamLanguages.sorted().joined(separator: ","))-\(epgRepository.programmeRevision)") {
+            await rankSources()
+        }
+        // A launch-time or Following-tab background scan can finish confirming this match's
+        // streams after this view already ran rankSources() from a cold cache — pick that up
+        // immediately instead of waiting for one of the .task id's own inputs to change.
+        .onChange(of: streamStore.sourcesByMatchId[match.id]) { _, updated in
+            guard let updated, !updated.isEmpty else { return }
+            rankedSources = updated
+            isRankingSources = false
+        }
+        .navigationDestination(item: $presentedMatchArticle) { article in
+            ArticleReaderView(article: article)
+        }
+        .navigationDestination(isPresented: $showingAllMatchNews) { moreMatchNewsList }
+    }
+
+    private var moreMatchNewsList: some View {
+        List(matchNews) { article in
+            NewsArticleCard(article: article) { presentedMatchArticle = article }
+                .listRowBackground(Theme.surface)
+                #if !os(tvOS)
+                .listRowSeparator(.hidden)
+                #endif
+        }
+        .listStyle(.plain)
+        .hidesScrollContentBackground()
+        .background(Theme.background)
+        .navigationTitle("Related News")
+        #if os(iOS)
+        .navigationBarTitleDisplayMode(.inline)
+        #endif
+    }
+
+    // MARK: Game actions
+
+    #if !os(tvOS)
+    /// Share, remind and add-to-calendar for this game; the same actions the list cards offer
+    /// in their context menus, now reachable from the screen itself.
+    private var gameActionsMenu: some View {
+        Menu {
+            ShareLink(item: shareText) {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+            if match.state != .final {
+                Button { Task { await setReminder() } } label: {
+                    Label(match.state == .live ? "Send Live Alert" : "Remind Me", systemImage: "bell")
+                }
+            }
+            #if canImport(EventKit)
+            if match.state == .pre {
+                Button { Task { await addToCalendar() } } label: {
+                    Label("Add to Calendar", systemImage: "calendar.badge.plus")
+                }
+            }
+            #endif
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .accessibilityLabel("Game actions")
+    }
+    #endif
+
+    /// Never includes a score: the recipient may not have watched yet.
+    private var shareText: String {
+        let matchup = "\(match.leadingSide.displayName) \(match.listsHomeSideFirst ? "v" : "at") \(match.trailingSide.displayName)"
+        var lines = ["\(matchup) · \(match.league.shortName)"]
+        switch match.state {
+        case .pre: lines.append(match.date.formatted(date: .abbreviated, time: .shortened))
+        case .live: lines.append("Live now")
+        case .final: lines.append("Final")
+        }
+        if !match.broadcasts.isEmpty { lines.append("On \(match.broadcasts.joined(separator: ", "))") }
+        return lines.joined(separator: "\n")
+    }
+
+    private func setReminder() async {
+        let scheduled = await MatchNotificationService.shared.scheduleReminder(for: match, leadTime: prefs.matchReminderLeadTime)
+        if scheduled {
+            prefs.setMatchNotificationsEnabled(true)
+        } else if !(await MatchNotificationService.shared.isAuthorized()) {
+            prefs.setMatchNotificationsEnabled(false)
+        }
+        actionMessage = scheduled
+            ? (match.state == .live ? "Live alert sent for \(match.shortName)." : "Reminder set for \(match.shortName).")
+            : "Notifications are disabled. Enable them in Settings to receive game alerts."
+    }
+
+    private func addToCalendar() async {
+        #if canImport(EventKit)
+        do {
+            let saved = try await MatchCalendarService.shared.add(matches: [match])
+            actionMessage = saved == 1 ? "Added \(match.shortName) to Calendar." : "No calendar event was added."
+        } catch {
+            actionMessage = error.localizedDescription
+        }
+        #endif
+    }
+
+    /// Finds streams for this match through `StreamAvailabilityStore`/`MatchLinkService`
+    /// (the shared `StreamLinker` engine — see MatchLinker/PROMPTS.md). Delegating to the
+    /// store instead of re-running the guide+backup scan here removes the duplicate matching
+    /// pass this view used to run on its own.
+    private func rankSources() async {
+        guard match.state != .final else {
+            rankedSources = []
+            isRankingSources = false
+            return
+        }
+
+        // Fast path: background scan already ran for this match — display immediately.
+        if let cached = streamStore.sourcesByMatchId[match.id], !cached.isEmpty {
+            rankedSources = cached
+            isRankingSources = false
+            return
+        }
+
+        await streamStore.scan(matches: [match], channels: playlists.allChannels, epgRepository: epgRepository)
+        guard !Task.isCancelled else { return }
+        rankedSources = streamStore.sourcesByMatchId[match.id] ?? []
+        isRankingSources = false
+    }
+
+    private func loadRosterPreviewForSelectedTeam() async {
+        guard let teamID = selectedTeamID, rosterPreviewByTeamID[teamID] == nil else { return }
+        let groups = (try? await SportsRepository.shared.legacyRoster(for: match.league, teamID: teamID)) ?? []
+        rosterPreviewByTeamID[teamID] = groups.flatMap(\.athletes)
+    }
+
+    private func loadOdds() async {
+        guard AppConfiguration.isOddsEnabled else { return }
+        isLoadingOdds = true
+        defer { isLoadingOdds = false }
+        odds = try? await OddsService().odds(for: match)
+    }
+
+    /// Leagues whose detail screen is a native game centre that loads its own data (see `body`).
+    /// Only a league outside this set falls through to the generic screen the legacy summary feeds.
+    private static let nativeGameCentreLeaguePaths: Set<String> = [
+        "hockey/nhl", "baseball/mlb", "football/nfl", "football/cfl", "racing/f1", "golf/pga",
+        "basketball/nba", "basketball/wnba", "soccer/eng.1", "soccer/usa.1", "soccer/esp.1", "soccer/uefa.champions",
+    ]
+
+    /// Loads boxscore stats once, then keeps polling while the game is live.
+    private func loadGameSummary() async {
+        guard !Self.nativeGameCentreLeaguePaths.contains(match.league.path) else { return }
+        gameSummary = nil
+        gameCenterTab = .players
+        didAttemptGameSummaryLoad = false
+        guard match.state != .pre else { return }
+
+        while !Task.isCancelled {
+            isLoadingGameSummary = gameSummary == nil
+            let summary = try? await SportsRepository.shared.legacyGameSummary(for: match)
+            didAttemptGameSummaryLoad = true
+            isLoadingGameSummary = false
+
+            if let summary, !summary.isEmpty {
+                gameSummary = summary
+            }
+
+            guard match.state == .live else { break }
+            try? await Task.sleep(nanoseconds: 45_000_000_000)
+            if Task.isCancelled { break }
+        }
+    }
+
+    private func loadGolfTournament() async {
+        golfTournament = nil
+        didAttemptGolfTournamentLoad = false
+        // "golf/pga" has its own bespoke Tournament Centre with its own data
+        // loading (GolfTournamentCentreView/PGATournamentCentreService) — this
+        // legacy polling loop only backs the generic GolfGameCentre fallback
+        // used by other (not-yet-native) golf leagues.
+        guard gameCentreArchetype == .golf, match.league.path != "golf/pga" else { return }
+
+        while !Task.isCancelled {
+            isLoadingGolfTournament = golfTournament == nil
+            let tournament = try? await SportsRepository.shared.golfTournament(
+                for: match.league,
+                gameID: BannerEntityID(rawValue: match.id)
+            )
+            didAttemptGolfTournamentLoad = true
+            isLoadingGolfTournament = false
+
+            if let tournament {
+                golfTournament = tournament
+            }
+
+            guard match.state == .live else { break }
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            if Task.isCancelled { break }
+        }
+    }
+
+    // MARK: Scoreboard header
+
+    @ViewBuilder private var eventHeader: some View {
+        switch gameCentreArchetype {
+        case .teamSport, .tennis:
+            scoreboard
+        case .golf, .motorsport, .combatSport:
+            GameCentreEventHeader(
+                match: match,
+                gameSummary: gameSummary,
+                golfTournament: golfTournament,
+                spoilerFreeMode: prefs.spoilerFreeMode,
+                spoilerRevealed: spoilerRevealed,
+                revealScore: { withAnimation(Theme.Motion.snappy) { spoilerRevealed = true } }
+            )
+        }
+    }
+
+    private var scoreboard: some View {
+        VStack(spacing: 16) {
+            statusLine
+            HStack(alignment: .center) {
+                teamColumn(match.leadingSide)
+                VStack(spacing: 4) {
+                    if match.state == .pre {
+                        Text("VS").font(.headline).foregroundStyle(Theme.textSecondary)
+                    } else if prefs.spoilerFreeMode && match.state == .final && !spoilerRevealed {
+                        VStack(spacing: 6) {
+                            Text("? – ?")
+                                .font(.title.weight(.bold).monospacedDigit())
+                                .foregroundStyle(Theme.textSecondary)
+                            Button("Reveal Score") {
+                                withAnimation(Theme.Motion.snappy) { spoilerRevealed = true }
+                            }
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Theme.accent)
+                        }
+                    } else {
+                        Text("\(match.leadingSide.score ?? "-")  –  \(match.trailingSide.score ?? "-")")
+                            .font(.title.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Theme.textPrimary)
+                    }
+                }
+                teamColumn(match.trailingSide)
+            }
+            compactMoneyline
+            if let venue = match.venue {
+                Label(venue, systemImage: "mappin.and.ellipse")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            if !match.broadcasts.isEmpty {
+                Label(match.broadcasts.joined(separator: ", "), systemImage: "tv")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(16)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+    }
+
+    @ViewBuilder
+    private var fantasySection: some View {
+        if let context = combinedFantasyContext {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "star.fill")
+                        .foregroundStyle(Theme.accent)
+                    Text("YOUR FANTASY PLAYERS")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Theme.accent)
+                    Spacer()
+                    Text("\(context.playerGames.count)")
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Theme.textSecondary)
+                }
+
+                VStack(spacing: 0) {
+                    ForEach(context.playerGames) { game in
+                        HStack(spacing: 10) {
+                            Text(game.lineupPosition ?? game.fantasyPlayer.position ?? "--")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(game.isFantasyStarter ? Theme.accent : Theme.textSecondary)
+                                .frame(width: 42, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(game.fantasyPlayer.fullName)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Theme.textPrimary)
+                                    .lineLimit(1)
+                                Text(game.isFantasyStarter ? "Starter" : game.isFantasyBench ? "Bench" : "Roster")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                            Spacer(minLength: 8)
+                            if let points = game.fantasyPoints {
+                                Text(points.formatted(.number.precision(.fractionLength(1))))
+                                    .font(.subheadline.weight(.bold).monospacedDigit())
+                                    .foregroundStyle(Theme.textPrimary)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                        if game.id != context.playerGames.last?.id { Divider().overlay(Theme.hairline) }
+                    }
+                }
+
+                if let channel = context.matchedChannel?.channel, match.state != .final {
+                    Button { playbackContext = MatchPlaybackContext(match: match, channel: channel, rankedSources: rankedSources) } label: {
+                        Label(match.state == .live ? "Watch" : "Watch when live", systemImage: "play.fill")
+                            .font(.subheadline.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(match.state == .live ? Theme.live : Theme.accent)
+                }
+            }
+            .padding(14)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+        }
+    }
+
+    private var combinedFantasyContext: FantasyEventContext? {
+        let imported = fantasyStore.fantasyEventContext(for: match)
+        let native = nativeFantasyStore.fantasyEventContext(for: match)
+        let games = (imported?.playerGames ?? []) + (native?.playerGames ?? [])
+        guard !games.isEmpty else { return nil }
+        let matched = (imported?.matchedChannel ?? native?.matchedChannel) ?? games.compactMap(\.matchedChannel).sorted { $0.score > $1.score }.first
+        return FantasyEventContext(event: match, playerGames: games, matchedChannel: matched)
+    }
+
+    private var statusLine: some View {
+        HStack(spacing: 6) {
+            if match.state == .live {
+                Circle().fill(Theme.live).frame(width: 8, height: 8)
+            }
+            Text(statusText)
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(match.state == .live ? Theme.live : Theme.textSecondary)
+        }
+    }
+
+    private var statusText: String {
+        switch match.state {
+        case .live: return "LIVE · \(match.statusDetail)"
+        case .final: return "FINAL"
+        case .pre:
+            return match.date.formatted(date: .abbreviated, time: .shortened)
+        }
+    }
+
+    private func teamColumn(_ team: TeamSide) -> some View {
+        VStack(spacing: 8) {
+            TeamLogo(url: team.logoURL, size: 56)
+            Text(team.shortName)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .multilineTextAlignment(.center)
+            if let record = team.record, !record.isEmpty {
+                Text(record).font(.caption2).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder private var compactMoneyline: some View {
+        if let odds {
+            CompactMoneylineOdds(match: match, odds: odds)
+        } else if isLoadingOdds {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(Theme.accent)
+                Text("Loading moneyline")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.top, -4)
+        }
+    }
+
+    private struct CompactMoneylineOdds: View {
+        let match: Match
+        let odds: MatchOddsDisplay
+
+        private var moneylineColumns: [OddsColumn] {
+            var columns = [OddsColumn(label: match.away.abbreviation.isEmpty ? match.away.shortName : match.away.abbreviation, price: odds.awayPrice)]
+            if let drawPrice = odds.drawPrice {
+                columns.append(OddsColumn(label: "Draw", price: drawPrice))
+            }
+            columns.append(OddsColumn(label: match.home.abbreviation.isEmpty ? match.home.shortName : match.home.abbreviation, price: odds.homePrice))
+            return columns
+        }
+
+        var body: some View {
+            HStack(spacing: 8) {
+                Text("ML")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Theme.textSecondary)
+                ForEach(moneylineColumns) { column in
+                    HStack(spacing: 3) {
+                        Text(column.label)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                        Text(format(price: column.price))
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Theme.textPrimary.opacity(0.92))
+                            .lineLimit(1)
+                    }
+                }
+                Text(odds.bookmakerName)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary.opacity(0.75))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(.white.opacity(0.04), in: Capsule())
+            .overlay(Capsule().strokeBorder(.white.opacity(0.11)))
+        }
+
+        private func format(price: Int?) -> String {
+            guard let price else { return "—" }
+            return price > 0 ? "+\(price)" : "\(price)"
+        }
+    }
+
+    private struct OddsColumn: Identifiable {
+        let id = UUID()
+        let label: String
+        let price: Int?
+    }
+
+    // MARK: In-game stats (boxscore + leaders)
+
+    /// The boxscore column for a side, matched by ESPN team id with a
+    /// positional fallback (ESPN lists away first).
+    private func teamBox(for side: TeamSide, fallbackIndex: Int) -> GameSummary.TeamBox? {
+        guard let summary = gameSummary else { return nil }
+        if let id = side.teamID, let box = summary.teams.first(where: { $0.id == id }) {
+            return box
+        }
+        return summary.teams.indices.contains(fallbackIndex) ? summary.teams[fallbackIndex] : nil
+    }
+
+    @ViewBuilder private var inGameStatsSection: some View {
+        if let summary = gameSummary, match.state != .pre, !summary.isEmpty {
+            if entitlements.isPremium {
+                inGameStatsBody(summary: summary)
+            } else {
+                ZStack {
+                    inGameStatsBody(summary: summary)
+                        .blur(radius: 8)
+                        .allowsHitTesting(false)
+                    PremiumGateOverlay(
+                        icon: "chart.bar.xaxis",
+                        title: "Game Stats",
+                        description: "Live boxscore comparison, game leaders and in-game analytics.",
+                        showPaywall: $showPaywall
+                    )
+                }
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+            }
+        }
+    }
+
+    @ViewBuilder private func inGameStatsBody(summary: GameSummary) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "chart.bar.xaxis")
+                Text(match.state == .live ? "In-Game Stats" : "Game Stats")
+                Spacer()
+                if match.state == .live {
+                    Text("LIVE")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Theme.live)
+                }
+            }
+            .font(.headline.weight(.bold))
+            .foregroundStyle(Theme.accent)
+
+            let awayBox = teamBox(for: match.away, fallbackIndex: 0)
+            let homeBox = teamBox(for: match.home, fallbackIndex: 1)
+
+            if let awayBox, let homeBox, !awayBox.stats.isEmpty {
+                statComparison(away: awayBox, home: homeBox)
+            }
+
+            if !summary.leaders.isEmpty {
+                gameLeaders(summary.leaders)
+            }
+        }
+    }
+
+    private func statComparison(away: GameSummary.TeamBox, home: GameSummary.TeamBox) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                TeamLogo(url: match.away.logoURL, size: 20)
+                Text(match.away.shortName)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Spacer()
+                Text(match.home.shortName)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                TeamLogo(url: match.home.logoURL, size: 20)
+            }
+            .padding(.vertical, 8)
+
+            ForEach(Array(away.stats.prefix(14)), id: \.label) { stat in
+                let homeValue = home.stats.first { $0.label == stat.label }?.displayValue ?? "–"
+                HStack {
+                    Text(stat.displayValue)
+                        .font(.footnote.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Theme.textPrimary)
+                        .frame(width: 74, alignment: .leading)
+                    Spacer()
+                    Text(stat.label)
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                    Spacer()
+                    Text(homeValue)
+                        .font(.footnote.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Theme.textPrimary)
+                        .frame(width: 74, alignment: .trailing)
+                }
+                .padding(.vertical, 7)
+                .overlay(alignment: .top) {
+                    Divider().overlay(Theme.hairline)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 6)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+    }
+
+    private func gameLeaders(_ leaders: [GameSummary.GameLeader]) -> some View {
+        VStack(spacing: 0) {
+            ForEach(leaders) { leader in
+                HStack(spacing: 10) {
+                    Text(leader.category)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(width: 92, alignment: .leading)
+                        .lineLimit(1)
+                    Text(leader.athleteName)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    if let team = leader.teamAbbreviation, !team.isEmpty {
+                        Text(team)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    Spacer()
+                    Text(leader.displayValue)
+                        .font(.footnote.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Theme.accent)
+                }
+                .padding(.vertical, 8)
+                .overlay(alignment: .top) {
+                    if leader.id != leaders.first?.id {
+                        Divider().overlay(Theme.hairline)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+    }
+
+    // MARK: Scoring / Play by Play
+
+    private var scoringPlays: [PlayByPlayEntry] {
+        gameSummary?.plays.filter(\.isScoringPlay) ?? []
+    }
+
+    @ViewBuilder private var scoringSummarySection: some View {
+        if match.state == .final, !scoringPlays.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "sportscourt.fill")
+                    Text("Scoring Summary")
+                    Spacer()
+                }
+                .font(.headline.weight(.bold))
+                .foregroundStyle(Theme.accent)
+
+                VStack(spacing: 0) {
+                    ForEach(Array(scoringPlays.prefix(12).enumerated()), id: \.element.id) { index, play in
+                        ScoringPlayRow(play: play, match: match)
+                        if index < min(scoringPlays.count, 12) - 1 {
+                            Divider().overlay(Theme.hairline)
+                        }
+                    }
+                }
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+            }
+        }
+    }
+
+    @ViewBuilder private var playByPlaySection: some View {
+        if let summary = gameSummary, match.state != .pre, !summary.plays.isEmpty {
+            if entitlements.isPremium {
+                if match.league.group == .baseball {
+                    LegacyBaseballPlayByPlayView(plays: summary.plays, match: match)
+                } else {
+                    PlayByPlaySectionView(plays: summary.plays, match: match)
+                }
+            } else {
+                ZStack {
+                    Group {
+                        if match.league.group == .baseball {
+                            LegacyBaseballPlayByPlayView(plays: Array(summary.plays.prefix(6)), match: match)
+                        } else {
+                            PlayByPlaySectionView(plays: Array(summary.plays.prefix(4)), match: match)
+                        }
+                    }
+                    .blur(radius: 7)
+                    .allowsHitTesting(false)
+                    PremiumGateOverlay(
+                        icon: "list.bullet.clipboard.fill",
+                        title: "Play by Play",
+                        description: "Real-time feed of every key moment as it happens.",
+                        showPaywall: $showPaywall
+                    )
+                }
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+            }
+        }
+    }
+
+    // MARK: Picks & Predictions
+
+    @ViewBuilder private var picksSection: some View {
+        if match.state == .pre || predictions.hasPrediction(for: match.id) {
+            let existing = predictions.prediction(for: match.id)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "trophy.fill")
+                    Text(existing == nil ? "Make Your Pick" : "Your Pick")
+                    Spacer()
+                    if let p = existing, let correct = p.isCorrect {
+                        Label(correct ? "Correct" : "Incorrect",
+                              systemImage: correct ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(correct ? Theme.Palette.positive : Theme.live)
+                    }
+                }
+                .font(.headline.weight(.bold))
+                .foregroundStyle(Theme.accent)
+
+                if let p = existing {
+                    HStack(spacing: 8) {
+                        Image(systemName: p.pick.systemImage)
+                        Text(p.pick.label(away: match.away.shortName, home: match.home.shortName))
+                            .fontWeight(.semibold)
+                        Spacer()
+                        if !p.isResolved {
+                            Text("Pending result")
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                        } else if let pts = p.pointsEarned {
+                            VStack(alignment: .trailing, spacing: 2) {
+                                if pts > 0 {
+                                    Text("+\(pts) pts")
+                                        .font(.subheadline.weight(.bold))
+                                        .foregroundStyle(Theme.Palette.positive)
+                                }
+                                if let streak = p.streakAtTime, streak >= 2 {
+                                    Text("🔥 \(streak) streak")
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(Theme.Palette.orange)
+                                }
+                            }
+                        }
+                    }
+                    .foregroundStyle(Theme.accent)
+                } else {
+                    HStack(spacing: 10) {
+                        pickButton(.away, label: match.away.shortName)
+                        if match.league.group == .soccer {
+                            pickButton(.draw, label: "Draw")
+                        }
+                        pickButton(.home, label: match.home.shortName)
+                    }
+                }
+            }
+            .padding(16)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).strokeBorder(Theme.hairline))
+            .overlay(alignment: .top) {
+                if showPickCelebration, let pts = existing?.pointsEarned, pts > 0 {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                        Text("You called it! +\(pts) pts")
+                        if let streak = existing?.streakAtTime, streak >= 2 {
+                            Text("🔥 \(streak)")
+                        }
+                    }
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .frame(maxWidth: .infinity)
+                    .background(Theme.Palette.positive, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .padding(.top, -8)
+                }
+            }
+            .clipped()
+            .animation(Theme.Motion.smooth, value: showPickCelebration)
+            .sensoryFeedback(.success, trigger: showPickCelebration) { _, new in new }
+            .task(id: match.id) {
+                predictions.resolveIfNeeded(for: match)
+            }
+            .onChange(of: predictions.prediction(for: match.id)?.isCorrect) { _, newValue in
+                if newValue == true {
+                    withAnimation { showPickCelebration = true }
+                    Task {
+                        try? await Task.sleep(nanoseconds: 2_500_000_000)
+                        withAnimation { showPickCelebration = false }
+                    }
+                }
+            }
+        }
+    }
+
+    private func pickButton(_ outcome: PickOutcome, label: String) -> some View {
+        Button {
+            predictions.place(pick: outcome, for: match)
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: outcome.systemImage)
+                    .font(.title3)
+                Text(label)
+                    .font(.caption.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(Theme.actionFill, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(match.state != .pre)
+    }
+
+    // MARK: Head-to-Head
+
+    @ViewBuilder private var headToHeadSection: some View {
+        if let h2h = gameSummary?.headToHead {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.left.arrow.right.circle.fill")
+                    Text("Head to Head")
+                    Spacer()
+                    Text(h2h.label)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .font(.headline.weight(.bold))
+                .foregroundStyle(Theme.accent)
+
+                HStack(spacing: 0) {
+                    h2hStatColumn(value: "\(h2h.awayWins)", label: match.away.shortName)
+                    if h2h.draws > 0 {
+                        h2hStatColumn(value: "\(h2h.draws)", label: "Draws")
+                    }
+                    h2hStatColumn(value: "\(h2h.homeWins)", label: match.home.shortName)
+                }
+                .padding(.horizontal, 8)
+            }
+            .padding(16)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).strokeBorder(Theme.hairline))
+        }
+    }
+
+    private func h2hStatColumn(value: String, label: String) -> some View {
+        VStack(spacing: 4) {
+            Text(value)
+                .font(.title2.weight(.bold).monospacedDigit())
+                .foregroundStyle(Theme.textPrimary)
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: Highlights
+
+    @ViewBuilder private var highlightsSection: some View {
+        if let highlights = gameSummary?.highlights, !highlights.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "play.circle.fill")
+                    Text("Highlights")
+                    Spacer()
+                }
+                .font(.headline.weight(.bold))
+                .foregroundStyle(Theme.accent)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(highlights) { clip in
+                            HighlightCard(clip: clip)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Game Centre (premium ESPN data)
+
+    @ViewBuilder private var gameCenterSection: some View {
+        if entitlements.isPremium {
+            gameCenterContent
+        } else {
+            ZStack {
+                gameCenterContent
+                    .blur(radius: 8)
+                    .allowsHitTesting(false)
+                PremiumGateOverlay(
+                    icon: "sportscourt.fill",
+                    title: "Game Centre",
+                    description: "Players, live stats, standings and deep team analytics.",
+                    showPaywall: $showPaywall
+                )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        }
+    }
+
+    private var gameCenterContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "sportscourt.fill")
+                Text("Game Centre")
+                Spacer()
+            }
+            .font(.headline.weight(.bold))
+            .foregroundStyle(Theme.accent)
+
+            // Tab bar
+            HStack(spacing: 0) {
+                ForEach(availableGameCenterTabs) { tab in
+                    Button {
+                        withAnimation(Theme.Motion.snappy) { gameCenterTab = tab }
+                    } label: {
+                        Text(tab.rawValue)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(gameCenterTab == tab ? .white : Theme.textSecondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .background(
+                                gameCenterTab == tab ? Theme.accent : Color.clear,
+                                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(3)
+            .background(Theme.surfaceElevated, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.hairline))
+
+            Group {
+                switch effectiveGameCenterTab {
+                case .players: gameCenterPlayersTab
+                case .gameStats: gameCenterStatsTab
+                case .standings: gameCenterStandingsTab
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var gameCenterPlayersTab: some View {
+        Picker("Team", selection: $selectedGameCenterTeam) {
+            Text(match.away.shortName).tag(GameCenterTeam.away)
+            Text(match.home.shortName).tag(GameCenterTeam.home)
+        }
+        .pickerStyle(.segmented)
+
+        selectedTeamHub
+
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 10)], spacing: 10) {
+            gameCenterTile(title: "Leaders", subtitle: match.league.shortName, systemImage: "chart.bar.fill") {
+                LeadersView(league: match.league)
+            }
+            gameCenterTile(title: "Injuries", subtitle: "Report", systemImage: "cross.case.fill") {
+                InjuriesView(league: match.league)
+            }
+        }
+    }
+
+    @ViewBuilder private var gameCenterStatsTab: some View {
+        if let summary = gameSummary, !summary.isEmpty {
+            inGameStatsBody(summary: summary)
+        } else if match.state == .pre {
+            HStack(spacing: 10) {
+                Image(systemName: "chart.bar.xaxis")
+                Text("Stats available once the game begins")
+            }
+            .font(.callout)
+            .foregroundStyle(Theme.textSecondary)
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+        } else if isLoadingGameSummary && !didAttemptGameSummaryLoad {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small).tint(Theme.accent)
+                Text("Loading stats...")
+                    .font(.callout)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(14)
+        } else {
+            gameStatsUnavailableState
+        }
+    }
+
+    private var gameStatsUnavailableState: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "chart.bar.xaxis")
+                .foregroundStyle(Theme.textSecondary)
+            Text(match.state == .live ? "Stats are not available yet." : "Stats are not available for this game.")
+                .font(.callout)
+                .foregroundStyle(Theme.textSecondary)
+            Spacer()
+            Button("Try Again") {
+                Task { await loadGameSummary() }
+            }
+            .buttonStyle(.bordered)
+            .tint(Theme.accent)
+        }
+        .padding(14)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+    }
+
+    private var gameCenterStandingsTab: some View {
+        MatchStandingsPreview(
+            league: match.league,
+            highlightedTeamIDs: Set([match.away.teamID, match.home.teamID].compactMap { $0 })
+        )
+    }
+
+    @ViewBuilder private var selectedTeamHub: some View {
+        let team = selectedGameCenterTeam == .away ? match.away : match.home
+        if let teamID = team.teamID {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    TeamLogo(url: team.logoURL, size: 42)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(team.displayName)
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                        if let record = team.record, !record.isEmpty {
+                            Text(record)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                    Spacer()
+                }
+
+                TeamRosterPreview(league: match.league,
+                                  teamID: teamID,
+                                  teamName: team.shortName,
+                                  athletes: rosterPreviewByTeamID[teamID] ?? [],
+                                  selectedPosition: $selectedRosterPosition,
+                                  isShowingAll: $isShowingFullRosterPreview)
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 10)], spacing: 10) {
+                    gameCenterTile(title: "Players", subtitle: "Roster", systemImage: "person.3.fill") {
+                        TeamRosterView(league: match.league, teamID: teamID, teamName: team.shortName)
+                    }
+                    gameCenterTile(title: "Bios", subtitle: "Profiles", systemImage: "person.text.rectangle") {
+                        TeamRosterView(league: match.league, teamID: teamID, teamName: team.shortName)
+                    }
+                    gameCenterTile(title: "Stats", subtitle: "Season", systemImage: "chart.xyaxis.line") {
+                        TeamRosterView(league: match.league, teamID: teamID, teamName: team.shortName)
+                    }
+                }
+            }
+            .padding(14)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+        }
+    }
+
+    private struct TeamRosterPreview: View {
+        let league: League
+        let teamID: String
+        let teamName: String
+        let athletes: [RosterAthlete]
+        @Binding var selectedPosition: String?
+        @Binding var isShowingAll: Bool
+
+        private var positions: [String] {
+            Array(Set(athletes.map(positionLabel))).sorted()
+        }
+
+        private var filteredAthletes: [RosterAthlete] {
+            guard let selectedPosition else { return athletes }
+            return athletes.filter { positionLabel(for: $0) == selectedPosition }
+        }
+
+        private var displayedAthletes: [RosterAthlete] {
+            isShowingAll ? filteredAthletes : Array(filteredAthletes.prefix(5))
+        }
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Label("Players", systemImage: "person.3.fill")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    NavigationLink("Full Roster") {
+                        TeamRosterView(league: league, teamID: teamID, teamName: teamName)
+                    }
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Theme.accent)
+                }
+
+                if athletes.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView().tint(Theme.accent)
+                        Text("Loading players")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                        Spacer()
+                    }
+                    .padding(.vertical, 4)
+                } else {
+                    positionFilter
+                    VStack(spacing: 0) {
+                        ForEach(displayedAthletes) { athlete in
+                            NavigationLink {
+                                PlayerDetailView(league: league, athlete: athlete)
+                            } label: {
+                                TeamRosterPreviewRow(athlete: athlete, position: positionLabel(for: athlete))
+                            }
+                            .buttonStyle(.plain)
+                            if athlete.id != displayedAthletes.last?.id {
+                                Divider().overlay(Theme.hairline)
+                            }
+                        }
+                    }
+                    .background(Theme.surfaceElevated, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+
+                    if filteredAthletes.count > 5 {
+                        Button {
+                            withAnimation(Theme.Motion.snappy) { isShowingAll.toggle() }
+                        } label: {
+                            HStack {
+                                Text(isShowingAll ? "Show fewer" : "More players")
+                                    .font(.subheadline.weight(.bold))
+                                Spacer()
+                                Image(systemName: isShowingAll ? "chevron.up" : "chevron.down")
+                                    .font(.caption.weight(.bold))
+                            }
+                            .foregroundStyle(Theme.accent)
+                            .padding(12)
+                            .background(Theme.surfaceElevated, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+
+        private var positionFilter: some View {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    positionChip(title: "All", isSelected: selectedPosition == nil) {
+                        selectedPosition = nil
+                        isShowingAll = false
+                    }
+                    ForEach(positions, id: \.self) { position in
+                        positionChip(title: position, isSelected: selectedPosition == position) {
+                            selectedPosition = position
+                            isShowingAll = false
+                        }
+                    }
+                }
+            }
+        }
+
+        private func positionChip(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+            Button(action: action) {
+                Text(title)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(isSelected ? .white : Theme.textSecondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(isSelected ? Theme.actionFill : Theme.surfaceElevated, in: Capsule())
+                    .overlay(Capsule().strokeBorder(isSelected ? Theme.actionFill : Theme.hairline))
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
+        }
+
+        private func positionLabel(for athlete: RosterAthlete) -> String {
+            athlete.position ?? athlete.positionName ?? "Position"
+        }
+    }
+
+    private struct TeamRosterPreviewRow: View {
+        let athlete: RosterAthlete
+        let position: String
+
+        var body: some View {
+            HStack(spacing: 10) {
+                PlayerHeadshot(url: athlete.headshotURL, size: 34)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(athlete.displayName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        if let jersey = athlete.jersey, !jersey.isEmpty {
+                            Text("#\(jersey)")
+                        }
+                        Text(position)
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer()
+                if athlete.isInjured {
+                    Image(systemName: "cross.case.fill")
+                        .font(.caption)
+                        .foregroundStyle(Theme.live)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(10)
+        }
+    }
+
+    private struct TeamPositionPreview: View {
+        let sport: SportGroup
+        let athletes: [RosterAthlete]
+
+        private var plottedPlayers: [PositionedAthlete] {
+            Array(athletes.prefix(14)).enumerated().map { index, athlete in
+                PositionedAthlete(athlete: athlete,
+                                  point: SportPositionMapper.point(for: athlete, sport: sport, fallbackIndex: index))
+            }
+        }
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Label("Player Positions", systemImage: sport.systemImage)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    Text(sport.rawValue.uppercased())
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Theme.accent)
+                }
+
+                if athletes.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView().tint(Theme.accent)
+                        Text("Loading roster positions")
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                        Spacer()
+                    }
+                    .padding(.vertical, 4)
+                } else {
+                    VirtualFieldView(sport: sport, players: plottedPlayers)
+                        .frame(maxWidth: .infinity)
+                        .aspectRatio(fieldAspectRatio, contentMode: .fit)
+                }
+            }
+        }
+
+        private var fieldAspectRatio: CGFloat {
+            switch sport {
+            case .basketball, .hockey: return 1.58
+            case .baseball: return 1.05
+            case .football, .golf, .racing, .tennis, .cycling, .wrestling, .esports: return 1.9
+            case .soccer: return 1.52
+            }
+        }
+    }
+
+    private struct PositionedAthlete: Identifiable {
+        let athlete: RosterAthlete
+        let point: CGPoint
+        var id: String { athlete.id }
+    }
+
+    private struct VirtualFieldView: View {
+        let sport: SportGroup
+        let players: [PositionedAthlete]
+
+        var body: some View {
+            GeometryReader { proxy in
+                ZStack {
+                    fieldBackground
+                    fieldMarkings
+                    ForEach(players) { player in
+                        PlayerPositionToken(athlete: player.athlete)
+                            .position(x: player.point.x * proxy.size.width,
+                                      y: player.point.y * proxy.size.height)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+            }
+        }
+
+        private var fieldBackground: some View {
+            RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous)
+                .fill(backgroundColor)
+        }
+
+        private var backgroundColor: Color {
+            switch sport {
+            case .soccer, .football: return Theme.Palette.deepGreen
+            case .basketball: return Theme.Palette.clay
+            case .baseball: return Theme.Palette.pitch
+            case .hockey: return Theme.Palette.frost
+            case .golf: return Theme.Palette.forest
+            case .racing: return Theme.Palette.graphite
+            case .tennis: return Theme.Palette.turf
+            case .cycling, .wrestling, .esports: return Theme.Palette.graphite
+            }
+        }
+
+        @ViewBuilder private var fieldMarkings: some View {
+            switch sport {
+            case .soccer:
+                SoccerFieldLines()
+            case .football:
+                FootballFieldLines()
+            case .basketball:
+                BasketballCourtLines()
+            case .baseball:
+                BaseballDiamondLines()
+            case .hockey:
+                HockeyRinkLines()
+            case .golf, .racing, .tennis, .cycling, .wrestling, .esports:
+                EmptyView()
+            }
+        }
+    }
+
+    private struct PlayerPositionToken: View {
+        let athlete: RosterAthlete
+
+        var body: some View {
+            VStack(spacing: 2) {
+                Text(initials)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(Theme.actionFill, in: Circle())
+                    .overlay(Circle().strokeBorder(.white.opacity(0.45)))
+                Text(label)
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(width: 48)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(.black.opacity(0.58), in: Capsule())
+            }
+        }
+
+        private var initials: String {
+            let parts = athlete.displayName.split(separator: " ")
+            let letters = parts.prefix(2).compactMap { $0.first }.map(String.init).joined()
+            return letters.isEmpty ? (athlete.position ?? "P") : letters.uppercased()
+        }
+
+        private var label: String {
+            if let jersey = athlete.jersey, !jersey.isEmpty {
+                return "#\(jersey) \(position)"
+            }
+            return position
+        }
+
+        private var position: String {
+            athlete.position ?? athlete.positionName ?? "POS"
+        }
+    }
+
+    private enum SportPositionMapper {
+        static func point(for athlete: RosterAthlete, sport: SportGroup, fallbackIndex: Int) -> CGPoint {
+            let key = ((athlete.position ?? athlete.positionName ?? "") as NSString)
+                .folding(options: .diacriticInsensitive, locale: .current)
+                .lowercased()
+            let mapped: CGPoint?
+            switch sport {
+            case .soccer: mapped = soccerPoint(for: key)
+            case .football: mapped = footballPoint(for: key)
+            case .basketball: mapped = basketballPoint(for: key)
+            case .baseball: mapped = baseballPoint(for: key)
+            case .hockey: mapped = hockeyPoint(for: key)
+            case .golf, .racing, .tennis, .cycling, .wrestling, .esports: mapped = nil
+            }
+            return jitter(mapped ?? fallbackPoint(for: fallbackIndex), index: fallbackIndex)
+        }
+
+        private static func jitter(_ point: CGPoint, index: Int) -> CGPoint {
+            let offsets: [CGFloat] = [-0.035, 0.035, 0, -0.02, 0.02]
+            let dx = offsets[index % offsets.count]
+            let dy = offsets[(index / offsets.count) % offsets.count] * 0.7
+            return CGPoint(x: min(0.92, max(0.08, point.x + dx)),
+                           y: min(0.9, max(0.1, point.y + dy)))
+        }
+
+        private static func fallbackPoint(for index: Int) -> CGPoint {
+            let columns: [CGFloat] = [0.2, 0.4, 0.6, 0.8]
+            let rows: [CGFloat] = [0.25, 0.42, 0.6, 0.77]
+            return CGPoint(x: columns[index % columns.count], y: rows[(index / columns.count) % rows.count])
+        }
+
+        private static func soccerPoint(for key: String) -> CGPoint? {
+            if key.contains("goal") || key == "gk" { return CGPoint(x: 0.5, y: 0.88) }
+            if key.contains("back") || key.contains("def") || ["cb", "lb", "rb", "lwb", "rwb"].contains(key) { return CGPoint(x: 0.5, y: 0.68) }
+            if key.contains("mid") || ["cm", "dm", "am", "lm", "rm"].contains(key) { return CGPoint(x: 0.5, y: 0.47) }
+            if key.contains("wing") || key.contains("forward") || key.contains("striker") || ["fw", "st", "cf", "lw", "rw"].contains(key) { return CGPoint(x: 0.5, y: 0.24) }
+            return nil
+        }
+
+        private static func footballPoint(for key: String) -> CGPoint? {
+            if key == "qb" || key.contains("quarterback") { return CGPoint(x: 0.5, y: 0.45) }
+            if ["rb", "fb"].contains(key) || key.contains("running") { return CGPoint(x: 0.5, y: 0.58) }
+            if key == "wr" || key.contains("receiver") { return CGPoint(x: 0.78, y: 0.38) }
+            if key == "te" || key.contains("tight") { return CGPoint(x: 0.64, y: 0.42) }
+            if ["c", "g", "og", "ot", "t"].contains(key) || key.contains("offensive") { return CGPoint(x: 0.5, y: 0.35) }
+            if key.contains("linebacker") || key == "lb" { return CGPoint(x: 0.5, y: 0.62) }
+            if key.contains("corner") || key == "cb" { return CGPoint(x: 0.78, y: 0.68) }
+            if key.contains("safety") || ["s", "fs", "ss"].contains(key) { return CGPoint(x: 0.5, y: 0.78) }
+            if key.contains("defensive") || ["dt", "de", "dl"].contains(key) { return CGPoint(x: 0.5, y: 0.55) }
+            if key.contains("kicker") || key == "k" || key == "p" { return CGPoint(x: 0.2, y: 0.82) }
+            return nil
+        }
+
+        private static func basketballPoint(for key: String) -> CGPoint? {
+            if key.contains("point") || key == "pg" { return CGPoint(x: 0.5, y: 0.78) }
+            if key.contains("shooting") || key == "sg" { return CGPoint(x: 0.72, y: 0.62) }
+            if key.contains("small") || key == "sf" { return CGPoint(x: 0.28, y: 0.62) }
+            if key.contains("power") || key == "pf" { return CGPoint(x: 0.68, y: 0.34) }
+            if key.contains("center") || key == "c" { return CGPoint(x: 0.5, y: 0.24) }
+            if key.contains("guard") { return CGPoint(x: 0.5, y: 0.68) }
+            if key.contains("forward") { return CGPoint(x: 0.5, y: 0.38) }
+            return nil
+        }
+
+        private static func baseballPoint(for key: String) -> CGPoint? {
+            if key == "p" || key.contains("pitcher") { return CGPoint(x: 0.5, y: 0.52) }
+            if key == "c" || key.contains("catcher") { return CGPoint(x: 0.5, y: 0.84) }
+            if key == "1b" || key.contains("first") { return CGPoint(x: 0.72, y: 0.61) }
+            if key == "2b" || key.contains("second") { return CGPoint(x: 0.62, y: 0.42) }
+            if key == "3b" || key.contains("third") { return CGPoint(x: 0.28, y: 0.61) }
+            if key == "ss" || key.contains("shortstop") { return CGPoint(x: 0.38, y: 0.42) }
+            if key == "lf" || key.contains("left") { return CGPoint(x: 0.22, y: 0.22) }
+            if key == "cf" || key.contains("center") { return CGPoint(x: 0.5, y: 0.14) }
+            if key == "rf" || key.contains("right") { return CGPoint(x: 0.78, y: 0.22) }
+            if key.contains("designated") || key == "dh" { return CGPoint(x: 0.86, y: 0.8) }
+            return nil
+        }
+
+        private static func hockeyPoint(for key: String) -> CGPoint? {
+            if key.contains("goal") || key == "g" { return CGPoint(x: 0.5, y: 0.86) }
+            if key.contains("defense") || key == "d" { return CGPoint(x: 0.5, y: 0.62) }
+            if key.contains("center") || key == "c" { return CGPoint(x: 0.5, y: 0.42) }
+            if key.contains("left") || key == "lw" { return CGPoint(x: 0.3, y: 0.32) }
+            if key.contains("right") || key == "rw" { return CGPoint(x: 0.7, y: 0.32) }
+            if key.contains("wing") { return CGPoint(x: 0.5, y: 0.32) }
+            return nil
+        }
+    }
+
+    private struct SoccerFieldLines: View {
+        var body: some View {
+            GeometryReader { proxy in
+                Path { path in
+                    let rect = CGRect(origin: .zero, size: proxy.size).insetBy(dx: 16, dy: 12)
+                    path.addRect(rect)
+                    path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+                    path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+                    path.addEllipse(in: CGRect(x: rect.midX - 36, y: rect.midY - 36, width: 72, height: 72))
+                    path.addRect(CGRect(x: rect.midX - 54, y: rect.maxY - 50, width: 108, height: 50))
+                    path.addRect(CGRect(x: rect.midX - 54, y: rect.minY, width: 108, height: 50))
+                }
+                .stroke(.white.opacity(0.35), lineWidth: 1.2)
+            }
+        }
+    }
+
+    private struct FootballFieldLines: View {
+        var body: some View {
+            GeometryReader { proxy in
+                Path { path in
+                    let rect = CGRect(origin: .zero, size: proxy.size).insetBy(dx: 14, dy: 12)
+                    path.addRect(rect)
+                    for index in 1..<10 {
+                        let x = rect.minX + rect.width * CGFloat(index) / 10
+                        path.move(to: CGPoint(x: x, y: rect.minY))
+                        path.addLine(to: CGPoint(x: x, y: rect.maxY))
+                    }
+                }
+                .stroke(.white.opacity(0.32), lineWidth: 1)
+            }
+        }
+    }
+
+    private struct BasketballCourtLines: View {
+        var body: some View {
+            GeometryReader { proxy in
+                Path { path in
+                    let rect = CGRect(origin: .zero, size: proxy.size).insetBy(dx: 16, dy: 12)
+                    path.addRect(rect)
+                    path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+                    path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+                    path.addEllipse(in: CGRect(x: rect.midX - 28, y: rect.midY - 28, width: 56, height: 56))
+                    path.addRect(CGRect(x: rect.midX - 42, y: rect.minY, width: 84, height: 52))
+                    path.addRect(CGRect(x: rect.midX - 42, y: rect.maxY - 52, width: 84, height: 52))
+                }
+                .stroke(.white.opacity(0.34), lineWidth: 1.2)
+            }
+        }
+    }
+
+    private struct BaseballDiamondLines: View {
+        var body: some View {
+            GeometryReader { proxy in
+                Path { path in
+                    let w = proxy.size.width
+                    let h = proxy.size.height
+                    let home = CGPoint(x: w * 0.5, y: h * 0.84)
+                    let first = CGPoint(x: w * 0.72, y: h * 0.62)
+                    let second = CGPoint(x: w * 0.5, y: h * 0.4)
+                    let third = CGPoint(x: w * 0.28, y: h * 0.62)
+                    path.move(to: home)
+                    path.addLine(to: first)
+                    path.addLine(to: second)
+                    path.addLine(to: third)
+                    path.closeSubpath()
+                    path.move(to: home)
+                    path.addLine(to: CGPoint(x: w * 0.16, y: h * 0.16))
+                    path.move(to: home)
+                    path.addLine(to: CGPoint(x: w * 0.84, y: h * 0.16))
+                    path.addEllipse(in: CGRect(x: w * 0.44, y: h * 0.46, width: w * 0.12, height: h * 0.08))
+                }
+                .stroke(.white.opacity(0.36), lineWidth: 1.2)
+            }
+        }
+    }
+
+    private struct HockeyRinkLines: View {
+        var body: some View {
+            GeometryReader { proxy in
+                Path { path in
+                    let rect = CGRect(origin: .zero, size: proxy.size).insetBy(dx: 16, dy: 12)
+                    path.addRoundedRect(in: rect, cornerSize: CGSize(width: 28, height: 28))
+                    for x in [rect.minX + rect.width * 0.25, rect.midX, rect.minX + rect.width * 0.75] {
+                        path.move(to: CGPoint(x: x, y: rect.minY))
+                        path.addLine(to: CGPoint(x: x, y: rect.maxY))
+                    }
+                    path.addEllipse(in: CGRect(x: rect.midX - 24, y: rect.midY - 24, width: 48, height: 48))
+                }
+                .stroke(Theme.Palette.cobalt.opacity(0.5), lineWidth: 1.2)
+            }
+        }
+    }
+
+    private func gameCenterTile<Destination: View>(title: String, subtitle: String, systemImage: String,
+                                                   @ViewBuilder destination: @escaping () -> Destination) -> some View {
+        NavigationLink {
+            destination()
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.headline)
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 34, height: 34)
+                    .background(Theme.surfaceElevated, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                Text(title)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(Theme.surfaceElevated, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func gameCenterLink<Destination: View>(title: String, subtitle: String, systemImage: String,
+                                                   @ViewBuilder destination: @escaping () -> Destination) -> some View {
+        NavigationLink {
+            destination()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.headline)
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 40, height: 40)
+                    .background(Theme.surfaceElevated, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(12)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Sources
+
+    private var sourcesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if playlists.allChannels.isEmpty {
+                if !watchLinks.isEmpty {
+                    Text("Where to Watch")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(Theme.textPrimary)
+                    noPlaylistWatchOptions
+                }
+                if playlists.playlists.isEmpty { connectPlaylistPrompt }
+            } else if isRankingSources && rankedSources.isEmpty {
+                HStack(spacing: 10) {
+                    ProgressView().tint(Theme.accent)
+                    Text("Finding your stream…")
+                        .font(.callout)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+            } else if let top = rankedSources.first {
+                let cleaned = ChannelDisplayName.make(from: top.channel.name)
+                PrimaryStreamCard(
+                    title: cleaned.title,
+                    isLive: match.state == .live,
+                    matchLabel: top.isConfirmed ? top.epgProgramme?.title : nil,
+                    countryFlag: cleaned.flag,
+                    quality: cleaned.quality,
+                    isConfirmed: top.isConfirmed,
+                    showsNewBadge: isNewlyRenamed(top.channel),
+                    action: { handleSourceTap(top.channel) }
+                )
+
+                if rankedSources.count > 1 {
+                    AlternateStreamsButton(count: rankedSources.count - 1) {
+                        isShowingMoreSources = true
+                    }
+                }
+            } else {
+                Text(noStreamReason)
+                    .font(.callout)
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+                // Nothing in the playlist matched, but the broadcaster may still stream it online.
+                if !watchLinks.isEmpty {
+                    Text("Or watch on")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                    noPlaylistWatchOptions
+                }
+            }
+        }
+        .sheet(isPresented: $isShowingMoreSources) { moreSourcesSheet }
+    }
+
+    /// Most guide ids in a real Xtream playlist only reach 12-72h ahead (see MatchLinker/
+    /// README.md) — a match further out than that hasn't necessarily been snubbed by the
+    /// provider's guide, it just hasn't been published yet.
+    private var noStreamReason: String {
+        match.date.timeIntervalSinceNow > 48 * 3600
+            ? "Listings appear closer to kickoff"
+            : "No listing in your playlist's guide"
+    }
+
+    private var moreSourcesSheet: some View {
+        NavigationStack {
+            List(rankedSources) { source in
+                SourceRow(name: ChannelDisplayName.make(from: source.channel.name).title,
+                          subtitle: source.epgProgramme?.title ?? source.channel.group ?? source.channel.playlistName,
+                          logoURL: source.channel.logoURL,
+                          score: source.score,
+                          evidenceCategories: source.evidenceCategories,
+                          isNew: isNewlyRenamed(source.channel),
+                          isPicking: false,
+                          isSelected: false) {
+                    isShowingMoreSources = false
+                    handleSourceTap(source.channel)
+                }
+                .listRowBackground(Theme.surface)
+            }
+            .listStyle(.plain)
+            .hidesScrollContentBackground()
+            .background(Theme.background)
+            .navigationTitle("Matched Streams")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem {
+                    Button("Done") { isShowingMoreSources = false }
+                }
+            }
+        }
+    }
+
+    /// True for the first hour after an event-slot channel's current name was first observed
+    /// — see MatchLinker/PROMPTS.md, Prompt 5 step 4.
+    private func isNewlyRenamed(_ channel: Channel) -> Bool {
+        guard let streamID = channel.xtreamStreamID else { return false }
+        return eventChannelRefresh.isNew(streamID: streamID, name: channel.name)
+    }
+
+    private func handleSourceTap(_ channel: Channel) {
+        PlaybackTapClock.record()
+        #if os(iOS)
+        // Starting a stream counts as a channel switch.
+        Haptic.impact(.light)
+        #endif
+        playbackContext = MatchPlaybackContext(match: match, channel: channel, rankedSources: rankedSources)
+    }
+
+    /// Broadcasters carrying this game, each linking out to where it streams.
+    /// Only used before the viewer connects a playlist.
+    private var watchLinks: [WatchLink] {
+        var seen: Set<String> = []
+        return match.broadcasts.compactMap { broadcaster -> WatchLink? in
+            let name = broadcaster.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, seen.insert(name.lowercased()).inserted else { return nil }
+            guard let url = Self.streamingURL(for: name) else { return nil }
+            return WatchLink(name: name, url: url)
+        }
+    }
+
+    /// Shown when no playlist is connected: broadcaster shortcut buttons for
+    /// known networks. Only rendered when watchLinks is non-empty.
+    @ViewBuilder private var noPlaylistWatchOptions: some View {
+        FlowLayout(spacing: 10) {
+            ForEach(watchLinks) { link in
+                broadcasterButton(link)
+            }
+        }
+    }
+
+    private func broadcasterButton(_ link: WatchLink) -> some View {
+        Button {
+            browsingWatchLink = link
+        } label: {
+            HStack(spacing: 6) {
+                Text(link.name)
+                    .font(.subheadline.weight(.bold))
+                Image(systemName: "arrow.up.right")
+                    .font(.caption.weight(.bold))
+            }
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Theme.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.hairline))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Watch on \(link.name)")
+        .accessibilityHint("Opens the \(link.name) live stream")
+    }
+
+    /// Shown when no playlist is connected: the way to watch in-app starts in Settings.
+    private var connectPlaylistPrompt: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "list.and.film")
+                .font(.title)
+                .foregroundStyle(Theme.textSecondary)
+            Text("Add a playlist to watch this game here.")
+                .font(.callout)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+            Button("Open Settings") { DeepLinkRouter.shared.handle(.settings) }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.accent)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(20)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+    }
+
+    /// Maps an ESPN broadcast network name to where it streams online. Matching
+    /// is done on a lowercased substring so entries like "ESPN2" or "NBC Sports"
+    /// resolve to the right service. Unknown broadcasters fall back to a web
+    /// search so the arrow always leads somewhere useful.
+    static func streamingURL(for broadcaster: String) -> URL? {
+        let key = broadcaster.lowercased()
+        // Order matters: more specific keys (e.g. "espn+") must precede their
+        // shorter prefixes ("espn").
+        let known: [(needle: String, url: String)] = [
+            ("espn+", "https://plus.espn.com"),
+            ("espn", "https://www.espn.com/watch/"),
+            ("abc", "https://abc.com/watch-live"),
+            ("nbcsn", "https://www.nbcsports.com/live"),
+            ("nbc sports", "https://www.nbcsports.com/live"),
+            ("nbc", "https://www.nbc.com/live"),
+            ("peacock", "https://www.peacocktv.com"),
+            ("cbs", "https://www.paramountplus.com/live-tv/"),
+            ("paramount", "https://www.paramountplus.com"),
+            ("fs1", "https://www.foxsports.com/live"),
+            ("fs2", "https://www.foxsports.com/live"),
+            ("fox", "https://www.foxsports.com/live"),
+            ("tnt", "https://www.max.com"),
+            ("tbs", "https://www.max.com"),
+            ("max", "https://www.max.com"),
+            ("prime", "https://www.amazon.com/gp/video/storefront"),
+            ("amazon", "https://www.amazon.com/gp/video/storefront"),
+            ("apple", "https://tv.apple.com"),
+            ("nfl network", "https://www.nfl.com/network/watch/nfl-network-live"),
+            ("nfl", "https://www.nfl.com/plus/"),
+            ("nba tv", "https://www.nba.com/watch"),
+            ("nhl network", "https://www.nhl.com/tv"),
+            ("mlb network", "https://www.mlb.com/network"),
+            ("golf channel", "https://www.nbcsports.com/golf"),
+            ("tennis channel", "https://www.tennischannel.com"),
+            ("usa network", "https://www.usanetwork.com/live"),
+            ("sky sports", "https://www.skysports.com/watch"),
+            ("sky sport", "https://www.skysports.com/watch"),
+            ("tnt sports", "https://www.tntsports.co.uk"),
+            ("dazn", "https://www.dazn.com"),
+            ("bein", "https://www.beinsports.com"),
+            ("telemundo", "https://www.telemundo.com/now"),
+            ("univision", "https://www.univision.com"),
+            ("tudn", "https://www.tudn.com")
+        ]
+        return known.first(where: { key.contains($0.needle) }).flatMap { URL(string: $0.url) }
+    }
+
+    // MARK: - Match News
+
+    @ViewBuilder private var matchNewsSection: some View {
+        if !matchNews.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "newspaper.fill")
+                        .foregroundStyle(Theme.accent)
+                    Text("RELATED NEWS")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Theme.accent)
+                }
+                VStack(spacing: 10) {
+                    ForEach(matchNews.prefix(3)) { article in
+                        NewsArticleCard(article: article) {
+                            presentedMatchArticle = article
+                        }
+                    }
+                }
+                if matchNews.count > 3 {
+                    Button {
+                        showingAllMatchNews = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("More news")
+                            Image(systemName: "chevron.right")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.accessibleAccent)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .frame(minHeight: 44)
+                }
+            }
+            .padding(14)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+        }
+    }
+}
+
+/// A broadcaster carrying a match, linking out to where it streams. Surfaced
+/// before the viewer connects a playlist.
+private struct WatchLink: Identifiable {
+    let id = UUID()
+    let name: String
+    let url: URL
+}
+
+
+private enum GameCenterTeam: String, Hashable {
+    case away
+    case home
+}
+
+struct MatchStandingsPreview: View {
+    let league: League
+    let highlightedTeamIDs: Set<String>
+    @State private var groups: [StandingsGroup] = []
+    @State private var isLoading = true
+
+    private var previewRows: [StandingRow] {
+        let allRows = uniqueRows(from: groups)
+        let highlighted = allRows.filter { highlightedTeamIDs.contains($0.teamID) }
+        let topRows = allRows.prefix(5).filter { !highlightedTeamIDs.contains($0.teamID) }
+        return Array((highlighted + topRows).prefix(6))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "list.number")
+                Text("Standings")
+                Spacer()
+                NavigationLink("Full Table") {
+                    StandingsView(league: league)
+                }
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Theme.accent)
+            }
+            .font(.headline.weight(.bold))
+            .foregroundStyle(Theme.textPrimary)
+
+            if isLoading && previewRows.isEmpty {
+                HStack(spacing: 10) {
+                    ProgressView().tint(Theme.accent)
+                    Text("Loading table")
+                        .font(.callout)
+                        .foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                }
+                .padding(14)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            } else if previewRows.isEmpty {
+                Text("Standings are not available for this league right now.")
+                    .font(.callout)
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            } else {
+                VStack(spacing: 0) {
+                    standingsHeader
+                    ForEach(Array(previewRows.enumerated()), id: \.element.id) { index, row in
+                        MatchStandingPreviewRow(rank: rank(for: row), row: row, isHighlighted: highlightedTeamIDs.contains(row.teamID))
+                        if index < previewRows.count - 1 {
+                            Divider().overlay(Theme.hairline)
+                        }
+                    }
+                }
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+            }
+        }
+        .task { await load() }
+    }
+
+    private var standingsHeader: some View {
+        HStack(spacing: 8) {
+            Text("#")
+                .frame(width: 24, alignment: .center)
+            Text("Team")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("Record")
+                .frame(width: 58, alignment: .trailing)
+            Text("PCT/GB")
+                .frame(width: 54, alignment: .trailing)
+            Text("Strk")
+                .frame(width: 38, alignment: .trailing)
+        }
+        .font(.caption2.weight(.bold))
+        .foregroundStyle(Theme.textSecondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Theme.surfaceElevated)
+    }
+
+    private func rank(for row: StandingRow) -> Int {
+        let allRows = uniqueRows(from: groups)
+        guard let index = allRows.firstIndex(where: { $0.teamID == row.teamID }) else { return 0 }
+        return index + 1
+    }
+
+    private func uniqueRows(from groups: [StandingsGroup]) -> [StandingRow] {
+        var seen: Set<String> = []
+        return groups.flatMap(\.rows).filter { row in
+            seen.insert(row.teamID).inserted
+        }
+    }
+
+    private func load() async {
+        isLoading = true
+        groups = (try? await SportsRepository.shared.legacyStandings(for: league)) ?? []
+        isLoading = false
+    }
+}
+
+private struct MatchStandingPreviewRow: View {
+    let rank: Int
+    let row: StandingRow
+    let isHighlighted: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(rank > 0 ? "\(rank)" : "-")
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(isHighlighted ? Theme.accent : Theme.textSecondary)
+                .frame(width: 24, alignment: .center)
+            TeamLogo(url: row.logoURL, size: 26)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(row.abbreviation.isEmpty ? row.displayName : row.abbreviation)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Text(row.displayName)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(row.record)
+                .font(.subheadline.weight(.bold).monospacedDigit())
+                .foregroundStyle(Theme.textPrimary)
+                .frame(width: 58, alignment: .trailing)
+            Text(row.gamesBack ?? row.winPercent ?? "-")
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 54, alignment: .trailing)
+            Text(row.streak?.isEmpty == false ? row.streak! : "-")
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(streakColor)
+                .frame(width: 38, alignment: .trailing)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(isHighlighted ? Theme.accent.opacity(0.12) : Color.clear)
+    }
+
+    private var streakColor: Color {
+        guard let streak = row.streak?.lowercased() else { return Theme.textSecondary }
+        if streak.hasPrefix("w") { return Theme.Palette.green }
+        if streak.hasPrefix("l") { return Theme.live }
+        return Theme.textSecondary
+    }
+}
+
+// MARK: - Source row
+
+private struct SourceRow: View {
+    let name: String
+    let subtitle: String
+    let logoURL: URL?
+    let score: Int?
+    var evidenceCategories: Set<StreamEvidenceCategory> = []
+    var isNew: Bool = false
+    let isPicking: Bool
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                CachedImage(url: logoURL) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFit()
+                    } else {
+                        Image(systemName: "play.tv")
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                .frame(width: 40, height: 40)
+                .background(Theme.surfaceElevated, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(name)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                        if isNew {
+                            Text("NEW")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 5).padding(.vertical, 2)
+                                .background(Theme.live, in: Capsule())
+                                .foregroundStyle(.white)
+                        }
+                    }
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if let score, !isPicking {
+                    MatchStrengthBadge(score: score, evidenceCategories: evidenceCategories)
+                }
+                trailingIcon
+            }
+            .padding(12)
+            .background(rowBackground, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(rowBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder private var trailingIcon: some View {
+        if isPicking {
+            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                .font(.title3)
+                .foregroundStyle(isSelected ? Theme.accent : Theme.textSecondary)
+        } else {
+            Image(systemName: "play.circle.fill")
+                .font(.title2)
+                .foregroundStyle(Theme.accent)
+        }
+    }
+
+    private var rowBackground: Color {
+        isSelected ? Theme.accent.opacity(0.15) : Theme.surface
+    }
+
+    private var rowBorder: Color {
+        isSelected ? Theme.accent : Theme.hairline
+    }
+}
+
+/// Badge showing why a channel was matched to this event.
+/// Prefers a named evidence category label; falls back to score thresholds.
+private struct MatchStrengthBadge: View {
+    let score: Int
+    var evidenceCategories: Set<StreamEvidenceCategory> = []
+
+    private var strongest: StreamEvidenceCategory? {
+        evidenceCategories.max { $0.priority < $1.priority }
+    }
+
+    private var label: String {
+        if let e = strongest { return e.displayLabel }
+        switch score {
+        case 100...: return "Teams Listed"
+        case 50..<100: return "Broadcaster"
+        default: return "League"
+        }
+    }
+
+    private var color: Color {
+        switch strongest {
+        case .guideListsMatch: return .green
+        case .broadcastRightsMatch: return Theme.accent
+        default: return Theme.textSecondary
+        }
+    }
+
+    var body: some View {
+        Text(label)
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(color.opacity(0.15), in: Capsule())
+    }
+}
+
+// MARK: - Play by play view
+
+private struct ScoringPlayRow: View {
+    let play: PlayByPlayEntry
+    let match: Match
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(spacing: 2) {
+                Text(play.period ?? "Game")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                if let clock = play.clock {
+                    Text(clock)
+                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .frame(width: 58, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(play.text)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let away = play.awayScore, let home = play.homeScore {
+                    Text("\(match.away.abbreviation) \(away) – \(home) \(match.home.abbreviation)")
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+    }
+}
+
+private struct PlayByPlaySectionView: View {
+    let plays: [PlayByPlayEntry]
+    let match: Match
+
+    @State private var isExpanded = true
+    @State private var showAll = false
+
+    private var periods: [(String, [PlayByPlayEntry])] {
+        var buckets: [(String, [PlayByPlayEntry])] = []
+        var seen: [String: Int] = [:]
+        for play in plays {
+            let key = play.period ?? "Game"
+            if let idx = seen[key] {
+                buckets[idx].1.append(play)
+            } else {
+                seen[key] = buckets.count
+                buckets.append((key, [play]))
+            }
+        }
+        return buckets
+    }
+
+    private var displayedPlays: [PlayByPlayEntry] {
+        showAll ? plays : Array(plays.prefix(20))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                withAnimation(Theme.Motion.snappy) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "list.bullet.clipboard")
+                    Text("Play by Play")
+                    Spacer()
+                    if match.state == .live {
+                        Text("LIVE")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(Theme.live)
+                    }
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .font(.headline.weight(.bold))
+                .foregroundStyle(Theme.accent)
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                VStack(spacing: 0) {
+                    ForEach(Array(displayedPlays.enumerated()), id: \.element.id) { index, play in
+                        PlayRowView(play: play, match: match)
+                        if index < displayedPlays.count - 1 {
+                            Divider().overlay(Theme.hairline).padding(.leading, 42)
+                        }
+                    }
+                }
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+
+                if plays.count > 20 {
+                    Button {
+                        withAnimation(Theme.Motion.snappy) { showAll.toggle() }
+                    } label: {
+                        HStack {
+                            Text(showAll ? "Show less" : "Show all \(plays.count) plays")
+                                .font(.subheadline.weight(.bold))
+                            Spacer()
+                            Image(systemName: showAll ? "chevron.up" : "chevron.down")
+                                .font(.caption.weight(.bold))
+                        }
+                        .foregroundStyle(Theme.accent)
+                        .padding(12)
+                        .background(Theme.surfaceElevated, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+private struct PlayRowView: View {
+    let play: PlayByPlayEntry
+    let match: Match
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            // Period + clock badge
+            VStack(spacing: 2) {
+                if let clock = play.clock {
+                    Text(clock)
+                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(play.isScoringPlay ? Theme.textPrimary : Theme.textSecondary)
+                }
+            }
+            .frame(width: 32, alignment: .center)
+
+            // Optional team dot
+            Circle()
+                .fill(teamColor(abbreviation: play.teamAbbreviation))
+                .frame(width: 7, height: 7)
+                .padding(.top, 4)
+
+            // Play text
+            VStack(alignment: .leading, spacing: 2) {
+                Text(play.text)
+                    .font(.footnote.weight(play.isScoringPlay ? .semibold : .regular))
+                    .foregroundStyle(play.isScoringPlay ? Theme.textPrimary : Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if play.isScoringPlay, let away = play.awayScore, let home = play.homeScore {
+                    Text("\(match.away.abbreviation) \(away) – \(home) \(match.home.abbreviation)")
+                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(play.isScoringPlay ? Theme.accent.opacity(0.06) : Color.clear)
+    }
+
+    private func teamColor(abbreviation: String?) -> Color {
+        guard let abbr = abbreviation, !abbr.isEmpty else { return Color.clear }
+        if abbr.localizedCaseInsensitiveCompare(match.away.abbreviation) == .orderedSame {
+            return Theme.Palette.cornflower
+        }
+        if abbr.localizedCaseInsensitiveCompare(match.home.abbreviation) == .orderedSame {
+            return Theme.Palette.raspberry
+        }
+        return Theme.textSecondary.opacity(0.5)
+    }
+}
+
+// MARK: - MLB Play by Play
+
+private struct MLBHalfInningGroup: Identifiable {
+    let id: String         // stable key e.g. "top-4", "bot-7"
+    let label: String      // "Top 4th", "Bot 7th"
+    let inningNumber: Int
+    let isTop: Bool
+    var plays: [PlayByPlayEntry]
+
+    var runsScored: Int {
+        guard plays.count > 1 else {
+            return plays.first.flatMap { $0.isScoringPlay ? 1 : nil } ?? 0
+        }
+        var count = 0
+        for i in 1..<plays.count {
+            let prev = plays[i - 1]
+            let cur  = plays[i]
+            if isTop {
+                let prevA = Int(prev.awayScore ?? "") ?? 0
+                let curA  = Int(cur.awayScore  ?? "") ?? 0
+                if curA > prevA { count += curA - prevA }
+            } else {
+                let prevH = Int(prev.homeScore ?? "") ?? 0
+                let curH  = Int(cur.homeScore  ?? "") ?? 0
+                if curH > prevH { count += curH - prevH }
+            }
+        }
+        return count
+    }
+
+    var hitsCount: Int {
+        plays.filter { play in
+            let badge = play.mlbBadge
+            return badge == "1B" || badge == "2B" || badge == "3B" || badge == "HR"
+        }.count
+    }
+}
+
+private extension PlayByPlayEntry {
+    // Splits "EventType: rest of description" — eventType is everything before first ": "
+    var mlbEventTypeName: String? {
+        guard let range = text.range(of: ": ") else { return nil }
+        return String(text[..<range.lowerBound])
+    }
+
+    var mlbDescriptionBody: String {
+        guard let range = text.range(of: ": ") else { return text }
+        return String(text[range.upperBound...])
+    }
+
+    var mlbBadge: String {
+        let et = mlbEventTypeName?.lowercased() ?? ""
+        let body = mlbDescriptionBody.lowercased()
+        if et.contains("home run")           { return "HR" }
+        if et.contains("triple")             { return "3B" }
+        if et.contains("double play")        { return "DP" }
+        if et.contains("double")             { return "2B" }
+        if et.contains("single")             { return "1B" }
+        if et.contains("strikeout")          { return "K"  }
+        if et.contains("walk") || et.contains("base on balls") { return "BB" }
+        if et.contains("hit by pitch")       { return "HBP" }
+        if et.contains("stolen base")        { return "SB"  }
+        if et.contains("caught stealing")    { return "CS"  }
+        if et.contains("error")              { return "E"   }
+        if et.contains("sac fly") || et.contains("sacrifice fly")   { return "SF" }
+        if et.contains("sac bunt") || et.contains("sacrifice bunt") { return "SH" }
+        if et.contains("wild pitch")         { return "WP"  }
+        if et.contains("passed ball")        { return "PB"  }
+        if et.contains("pickoff")            { return "PO"  }
+        if et.contains("balk")               { return "BLK" }
+        if et.contains("fielder") && (et.contains("choice") || body.contains("fielder's choice")) { return "FC" }
+        if et.contains("groundout") || et.contains("ground out") { return "OUT" }
+        if et.contains("flyout") || et.contains("fly out")       { return "OUT" }
+        if et.contains("lineout") || et.contains("line out")     { return "OUT" }
+        if et.contains("pop out") || et.contains("popup")        { return "OUT" }
+        return "•"
+    }
+
+    var mlbIsOut: Bool {
+        let b = mlbBadge
+        return b == "K" || b == "OUT" || b == "DP" || b == "SF" || b == "SH" || b == "CS"
+    }
+
+    // Tier: 3 = highlight (HR/3B), 2 = hit/BB, 1 = out/other
+    var mlbTier: Int {
+        let b = mlbBadge
+        if b == "HR" || b == "3B" || isScoringPlay { return 3 }
+        if b == "1B" || b == "2B" || b == "BB" || b == "HBP" || b == "SB" || b == "WP" || b == "PB" { return 2 }
+        return 1
+    }
+
+    // Extract batter/player name from description body
+    var mlbBatterName: String? {
+        let body = mlbDescriptionBody
+        // Verbs that immediately follow the player name
+        let verbs: [String] = [
+            "grounds ", "flies ", "lines ", "pops ", "strikes ",
+            "walks ", "is hit", "homers", "singles", "doubles", "triples",
+            "reaches ", "bats ", "pinch", "steals ", "caught ", "scores",
+            "advances", "out on", "hits "
+        ]
+        for verb in verbs {
+            if let r = body.range(of: verb, options: .caseInsensitive) {
+                let candidate = String(body[..<r.lowerBound]).trimmingCharacters(in: .whitespaces)
+                if candidate.count > 1, candidate.count < 45,
+                   candidate.first?.isUppercase == true,
+                   !candidate.contains(": ") {
+                    return candidate
+                }
+            }
+        }
+        return nil
+    }
+
+    // Shortened description removing the batter name prefix and expanding fielder abbrs
+    var mlbShortDescription: String {
+        var desc = mlbDescriptionBody
+        if let name = mlbBatterName, desc.hasPrefix(name) {
+            desc = String(desc.dropFirst(name.count)).trimmingCharacters(in: .whitespaces)
+            if desc.hasPrefix(",") { desc = String(desc.dropFirst()).trimmingCharacters(in: .whitespaces) }
+        }
+        // Shorten fielder position names
+        let replacements: [(String, String)] = [
+            ("center fielder", "CF"), ("right fielder", "RF"), ("left fielder", "LF"),
+            ("first baseman", "1B"), ("second baseman", "2B"), ("third baseman", "3B"),
+            ("shortstop", "SS"), ("pitcher", "P"), ("catcher", "C")
+        ]
+        for (long, short) in replacements {
+            desc = desc.replacingOccurrences(of: long, with: short, options: .caseInsensitive)
+        }
+        // Strip trailing "." if too long
+        if desc.hasSuffix(".") && desc.count > 60 {
+            desc = String(desc.dropLast())
+        }
+        return desc.trimmingCharacters(in: .whitespaces)
+    }
+
+    var mlbIsTopInning: Bool {
+        period?.lowercased().hasPrefix("top") == true
+    }
+}
+
+private func groupMLBPlays(_ plays: [PlayByPlayEntry]) -> [MLBHalfInningGroup] {
+    var groups: [MLBHalfInningGroup] = []
+    var indexMap: [String: Int] = [:]
+    for play in plays {
+        let rawLabel = play.period ?? "Game"
+        // Normalize "Bot" vs "Bottom"
+        let label = rawLabel.hasPrefix("Bottom") ? "Bot" + rawLabel.dropFirst(6) : rawLabel
+        let isTop = label.lowercased().hasPrefix("top")
+        let num   = play.periodNumber ?? 0
+        let key   = "\(isTop ? "top" : "bot")-\(num)"
+        if let idx = indexMap[key] {
+            groups[idx].plays.append(play)
+        } else {
+            indexMap[key] = groups.count
+            groups.append(MLBHalfInningGroup(
+                id: key, label: label, inningNumber: num, isTop: isTop, plays: [play]
+            ))
+        }
+    }
+    return groups
+}
+
+private struct LegacyBaseballPlayByPlayView: View {
+    let plays: [PlayByPlayEntry]
+    let match: Match
+
+    private var groups: [MLBHalfInningGroup] { groupMLBPlays(plays) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Section header
+            HStack(spacing: 8) {
+                Image(systemName: "list.bullet.clipboard")
+                Text("Play by Play")
+                Spacer()
+                if match.state == .live {
+                    Text("LIVE")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Theme.live)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Theme.live.opacity(0.12), in: Capsule())
+                }
+            }
+            .font(.headline.weight(.bold))
+            .foregroundStyle(Theme.accent)
+
+            // Half-inning sections, newest first
+            let reversed = groups.reversed() as [MLBHalfInningGroup]
+            ForEach(Array(reversed.enumerated()), id: \.element.id) { idx, group in
+                let isActive    = idx == 0 && match.state == .live
+                let isRecent    = idx == 1 && match.state == .live
+                MLBHalfInningSection(group: group, isActive: isActive, isRecentlyCompleted: isRecent, match: match)
+            }
+        }
+    }
+}
+
+private struct MLBHalfInningSection: View {
+    let group: MLBHalfInningGroup
+    let isActive: Bool
+    let isRecentlyCompleted: Bool
+    let match: Match
+
+    @State private var isExpanded: Bool
+
+    init(group: MLBHalfInningGroup, isActive: Bool, isRecentlyCompleted: Bool, match: Match) {
+        self.group = group
+        self.isActive = isActive
+        self.isRecentlyCompleted = isRecentlyCompleted
+        self.match = match
+        self._isExpanded = State(initialValue: isActive || isRecentlyCompleted)
+    }
+
+    private var battingTeam: TeamSide { group.isTop ? match.away : match.home }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Section header row
+            Button {
+                withAnimation(Theme.Motion.snappy) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(isActive ? Theme.accent : Theme.textSecondary)
+                        .frame(width: 14)
+
+                    Text(group.label.uppercased())
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(isActive ? Theme.accent : Theme.textSecondary)
+
+                    if isActive {
+                        Text("NOW BATTING")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(Theme.live)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Theme.live.opacity(0.12), in: Capsule())
+                    }
+
+                    Spacer()
+
+                    if !isExpanded {
+                        HStack(spacing: 6) {
+                            if group.runsScored > 0 {
+                                Text("\(group.runsScored) R")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(Theme.accent)
+                            }
+                            if group.hitsCount > 0 {
+                                Text("·  \(group.hitsCount) H")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                            if group.runsScored == 0 && group.hitsCount == 0 {
+                                Text(battingTeam.abbreviation)
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                        }
+                    } else {
+                        Text("\(battingTeam.abbreviation) batting")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+            .buttonStyle(.plain)
+            .background(isActive ? Theme.accent.opacity(0.06) : Theme.surface)
+
+            // Plays
+            if isExpanded {
+                let sorted = group.plays.sorted { ($0.periodNumber ?? 0) == ($1.periodNumber ?? 0)
+                    ? (Int($0.id) ?? 0) > (Int($1.id) ?? 0)
+                    : ($0.periodNumber ?? 0) > ($1.periodNumber ?? 0)
+                }
+                VStack(spacing: 0) {
+                    ForEach(Array(sorted.enumerated()), id: \.element.id) { idx, play in
+                        MLBPlayRow(play: play, match: match)
+                        if idx < sorted.count - 1 {
+                            Divider().overlay(Theme.hairline).padding(.leading, 52)
+                        }
+                    }
+                }
+                .background(Theme.surface)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(
+            isActive ? Theme.accent.opacity(0.3) : Theme.hairline
+        ))
+    }
+}
+
+private struct MLBPlayRow: View {
+    let play: PlayByPlayEntry
+    let match: Match
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            // Event badge
+            MLBEventBadge(badge: play.mlbBadge, tier: play.mlbTier)
+                .frame(width: 36, alignment: .center)
+
+            // Description block
+            VStack(alignment: .leading, spacing: 3) {
+                if let batter = play.mlbBatterName {
+                    Text(batter)
+                        .font(.subheadline.weight(play.mlbTier == 3 ? .bold : .semibold))
+                        .foregroundStyle(play.mlbTier == 3 ? Theme.textPrimary : Theme.textSecondary.opacity(0.9))
+                        .lineLimit(1)
+                }
+                Text(play.mlbShortDescription)
+                    .font(.caption)
+                    .foregroundStyle(play.mlbTier >= 2 ? Theme.textSecondary : Theme.textSecondary.opacity(0.6))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if play.isScoringPlay, let away = play.awayScore, let home = play.homeScore {
+                    HStack(spacing: 4) {
+                        Image(systemName: "star.fill")
+                            .font(.system(size: 7))
+                            .foregroundStyle(Theme.accent)
+                        Text("\(match.away.abbreviation) \(away)  –  \(home) \(match.home.abbreviation)")
+                            .font(.caption2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Theme.accent)
+                    }
+                    .padding(.top, 1)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(play.mlbTier == 3 ? Theme.accent.opacity(0.05) : Color.clear)
+    }
+}
+
+private struct MLBEventBadge: View {
+    let badge: String
+    let tier: Int
+
+    private var badgeColor: Color {
+        switch badge {
+        case "HR":        return Theme.Palette.sunflower
+        case "3B":        return Theme.accent
+        case "2B":        return Theme.accent.opacity(0.75)
+        case "1B":        return Theme.accent.opacity(0.55)
+        case "BB", "HBP": return Theme.Palette.skyBlue
+        case "K":         return Theme.textSecondary.opacity(0.5)
+        case "E":         return Theme.Palette.raspberry
+        case "DP":        return Theme.textSecondary.opacity(0.45)
+        case "SB":        return Theme.Palette.mint
+        case "CS":        return Theme.Palette.raspberry.opacity(0.7)
+        case "WP", "PB":  return Theme.textSecondary.opacity(0.4)
+        case "OUT":       return Theme.textSecondary.opacity(0.4)
+        default:          return Theme.textSecondary.opacity(0.3)
+        }
+    }
+
+    var body: some View {
+        Text(badge)
+            .font(.system(size: badge.count > 2 ? 8.5 : 10, weight: .bold, design: .rounded))
+            .foregroundStyle(tier == 3 ? badgeColor : badgeColor.opacity(0.9))
+            .padding(.horizontal, badge.count > 2 ? 4 : 5)
+            .padding(.vertical, 3)
+            .background(badgeColor.opacity(tier == 3 ? 0.2 : 0.1),
+                        in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .strokeBorder(badgeColor.opacity(tier == 3 ? 0.4 : 0.2), lineWidth: 0.5))
+    }
+}
+
+// MARK: - Highlight card
+
+struct HighlightCard: View {
+    let clip: MatchHighlight
+    @State private var showSafari = false
+
+    var body: some View {
+        Button {
+            if clip.webURL != nil { showSafari = true }
+        } label: {
+            cardContent
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showSafari) {
+            if let url = clip.webURL {
+                #if os(iOS)
+                SafariSheet(url: url).ignoresSafeArea()
+                #endif
+            }
+        }
+    }
+
+    private var cardContent: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack {
+                Theme.surfaceElevated
+                CachedImage(url: clip.thumbnailURL) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                    } else {
+                        Image(systemName: "play.rectangle.fill")
+                            .font(.title2)
+                            .foregroundStyle(Theme.accent)
+                    }
+                }
+            }
+            .frame(width: 200, height: 112)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            .overlay(alignment: .bottomTrailing) {
+                Image(systemName: "play.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.white)
+                    .shadow(radius: 4)
+                    .padding(8)
+            }
+            .overlay(alignment: .bottomLeading) {
+                if let dur = clip.formattedDuration {
+                    Text(dur)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 4))
+                        .padding(6)
+                }
+            }
+
+            Text(clip.title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+        }
+        .frame(width: 200)
+    }
+}
+
+// MARK: - In-app Safari browser
+
+#if os(iOS)
+struct SafariSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> SFSafariViewController { SFSafariViewController(url: url) }
+    func updateUIViewController(_ vc: SFSafariViewController, context: Context) {}
+}
+#endif

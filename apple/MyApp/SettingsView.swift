@@ -1,0 +1,2055 @@
+import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
+
+struct SettingsView: View {
+    var body: some View {
+        MoreView()
+    }
+}
+
+struct PlaylistsSettingsView: View {
+    @EnvironmentObject private var playlists: PlaylistStore
+    @State private var showingAddPlaylist = false
+    @State private var editingPlaylist: Playlist?
+
+    var body: some View {
+        ZStack {
+            Theme.background.ignoresSafeArea()
+            List {
+                Section("CONNECTED") {
+                    if playlists.playlists.isEmpty {
+                        Button {
+                    editingPlaylist = nil
+                    showingAddPlaylist = true
+                } label: {
+                            Label("Add Stream Playlist", systemImage: "plus")
+                                .foregroundStyle(Theme.accent)
+                        }
+                    } else {
+                        ForEach(playlists.playlists) { playlist in
+                            NavigationLink {
+                                PlaylistDetailSettingsView(playlist: playlist)
+                            } label: {
+                                PlaylistConnectionRow(
+                                    playlist: playlist,
+                                    refresh: { Task { await playlists.refresh(playlist) } },
+                                    edit: { edit(playlist) },
+                                    makeDefault: { playlists.setDefault(playlist) },
+                                    delete: { delete(playlist) }
+                                )
+                            }
+                            .platformRowActions {
+                                Button(role: .destructive) { delete(playlist) } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                            .contextMenu { playlistActions(for: playlist) }
+                        }
+                    }
+                }
+            }
+            .platformGroupedList()
+            .hidesScrollContentBackground()
+        }
+        .navigationTitle("Playlists")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { showingAddPlaylist = true } label: {
+                    Label("Add", systemImage: "plus")
+                }
+            }
+        }
+        .sheet(isPresented: $showingAddPlaylist, onDismiss: { editingPlaylist = nil }) {
+            AddPlaylistView(initialPlaylist: editingPlaylist) { playlist in
+                if editingPlaylist == nil {
+                    playlists.add(playlist)
+                } else {
+                    playlists.replace(playlist)
+                }
+            }
+        }
+        .refreshable { await playlists.refreshAll(force: true) }
+    }
+
+    @ViewBuilder private func playlistActions(for playlist: Playlist) -> some View {
+        Button { Task { await playlists.refresh(playlist) } } label: {
+            Label("Refresh", systemImage: "arrow.clockwise")
+        }
+        Button { edit(playlist) } label: {
+            Label("Edit", systemImage: "pencil")
+        }
+        Button { playlists.setDefault(playlist) } label: {
+            Label(playlists.isDefault(playlist) ? "Default Playlist" : "Make Default", systemImage: playlists.isDefault(playlist) ? "checkmark.circle.fill" : "checkmark.circle")
+        }
+        Button(role: .destructive) { delete(playlist) } label: {
+            Label("Delete", systemImage: "trash")
+        }
+    }
+
+    private func edit(_ playlist: Playlist) {
+        editingPlaylist = playlist
+        showingAddPlaylist = true
+    }
+
+    private func delete(_ playlist: Playlist) {
+        guard let index = playlists.playlists.firstIndex(of: playlist) else { return }
+        playlists.remove(at: IndexSet(integer: index))
+    }
+}
+
+struct PlaylistDetailSettingsView: View {
+    @EnvironmentObject private var playlists: PlaylistStore
+    let playlist: Playlist
+    @State private var revealAddress = false
+    @State private var showingEditor = false
+
+    private var currentPlaylist: Playlist {
+        playlists.playlists.first(where: { $0.id == playlist.id }) ?? playlist
+    }
+
+    var body: some View {
+        ZStack {
+            Theme.background.ignoresSafeArea()
+            List {
+                Section {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(currentPlaylist.name)
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Label("Connected", systemImage: "checkmark.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.upcoming)
+                    }
+                    .padding(.vertical, 8)
+                }
+
+                Section("DETAILS") {
+                    DetailValueRow(title: "Channel count", value: "\(playlists.channelCount(for: currentPlaylist))")
+                    DetailValueRow(title: "Last refresh", value: playlists.isLoading(currentPlaylist) ? "Refreshing" : "Recently")
+                    DetailValueRow(title: "Preferred playlist", value: playlists.isDefault(currentPlaylist) ? "On" : "Off")
+                    if let address = playlistAddress {
+                        Button { revealAddress.toggle() } label: {
+                            DetailValueRow(title: "Server address", value: revealAddress ? address : "Hidden")
+                        }
+                    }
+                }
+
+                if currentPlaylist.kind == .xtream, let status = playlists.xtreamAccountStatus.statusByPlaylistID[currentPlaylist.id] {
+                    Section("CONNECTION") {
+                        if let accountStatus = status.status {
+                            DetailValueRow(title: "Account status", value: accountStatus)
+                        }
+                        if let max = status.maxConnections {
+                            DetailValueRow(title: "Connections", value: "\(status.activeConnections ?? 0) of \(max) in use")
+                        } else if !status.isInconclusive {
+                            DetailValueRow(title: "Connections", value: "Unknown limit")
+                        }
+                        if let expiry = status.expiresAt {
+                            DetailValueRow(title: "Expires", value: expiry.formatted(date: .abbreviated, time: .omitted))
+                        }
+                    }
+                }
+
+                Section("ACTIONS") {
+                    Button { Task { await playlists.refresh(currentPlaylist) } } label: {
+                        Label("Refresh playlist", systemImage: "arrow.clockwise")
+                    }
+                    Button { showingEditor = true } label: {
+                        Label("Edit credentials", systemImage: "key.fill")
+                    }
+                    Button { playlists.setDefault(currentPlaylist) } label: {
+                        Label(playlists.isDefault(currentPlaylist) ? "Preferred playlist" : "Make preferred playlist", systemImage: playlists.isDefault(currentPlaylist) ? "checkmark.circle.fill" : "checkmark.circle")
+                    }
+                    Button(role: .destructive) { deleteCurrentPlaylist() } label: {
+                        Label("Delete playlist", systemImage: "trash")
+                    }
+                }
+            }
+            .platformGroupedList()
+            .hidesScrollContentBackground()
+        }
+        .navigationTitle(currentPlaylist.name)
+        .sheet(isPresented: $showingEditor) {
+            AddPlaylistView(initialPlaylist: currentPlaylist) { playlists.replace($0) }
+        }
+    }
+
+    private var playlistAddress: String? {
+        switch currentPlaylist.kind {
+        case .m3u: currentPlaylist.m3uURL
+        case .xtream: currentPlaylist.host
+        }
+    }
+
+    private func deleteCurrentPlaylist() {
+        guard let index = playlists.playlists.firstIndex(of: currentPlaylist) else { return }
+        playlists.remove(at: IndexSet(integer: index))
+    }
+}
+
+struct AppearancePlaybackSettingsView: View {
+    @EnvironmentObject private var prefs: PreferencesStore
+
+    var body: some View {
+        SettingsPage(title: "Appearance & Playback") {
+            SettingsPanel(title: "APPEARANCE") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Theme")
+                        .font(.body)
+                        .foregroundStyle(Theme.textPrimary)
+                    Picker("Theme", selection: Binding(get: { prefs.appearance }, set: { prefs.setAppearance($0) })) {
+                        ForEach(AppAppearance.allCases) { appearance in
+                            Text(appearance.label).tag(appearance)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                .padding(14)
+            }
+
+            SettingsPanel(title: "PLAYBACK") {
+                Menu {
+                    ForEach(StreamLanguage.all) { language in
+                        Button { prefs.setDefaultStreamLanguage(language) } label: {
+                            if prefs.isStreamLanguageSelected(language) {
+                                Label(language.name, systemImage: "checkmark")
+                            } else {
+                                Text(language.name)
+                            }
+                        }
+                    }
+                } label: {
+                    SettingsDisclosureRow(title: "Streaming Language", value: defaultStreamLanguageName)
+                }
+                Divider().overlay(Theme.hairline)
+                SettingsDisclosureRow(title: "Preferred Player", value: "Built-in")
+                Divider().overlay(Theme.hairline)
+                SettingsToggleRow(title: "Autoplay Next Channel", isOn: .constant(true))
+                Divider().overlay(Theme.hairline)
+                SettingsToggleRow(title: "Picture in Picture", isOn: .constant(true))
+            }
+
+            SettingsPanel(title: "SCORES") {
+                SettingsToggleRow(title: "Spoiler-Free Mode", isOn: Binding(get: { prefs.spoilerFreeMode }, set: { prefs.setSpoilerFreeMode($0) }))
+                Text("When spoiler-free mode is enabled, completed-game scores and result headlines are hidden.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+                Divider().overlay(Theme.hairline)
+                SettingsToggleRow(title: "Live Score Overlay", isOn: Binding(get: { prefs.showLiveScoreBadge }, set: { prefs.setShowLiveScoreBadge($0) }))
+                Divider().overlay(Theme.hairline)
+                SettingsToggleRow(title: "Live Score Bar", isOn: Binding(get: { prefs.showLiveScoreBar }, set: { prefs.setShowLiveScoreBar($0) }))
+                Text("Shows a red accent bar at the top of live match cards.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+            }
+        }
+    }
+
+    private var defaultStreamLanguageName: String {
+        let selected = prefs.preferredStreamLanguages.first ?? "en"
+        return StreamLanguage.all.first { $0.code == selected }?.name ?? "English"
+    }
+}
+
+struct NotificationsCalendarSettingsView: View {
+    @EnvironmentObject private var prefs: PreferencesStore
+    @EnvironmentObject private var entitlements: EntitlementStore
+    @State private var isExportingCalendar = false
+    @State private var calendarExportMessage: String?
+    @State private var showPaywall = false
+
+    var body: some View {
+        SettingsPage(title: "Notifications & Calendar") {
+            SettingsPanel(title: "MASTER CONTROL") {
+                HStack {
+                    Text("Smart Alerts")
+                        .font(.body)
+                        .foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                    if entitlements.isPremium {
+                        Toggle("Smart Alerts", isOn: Binding(get: { prefs.matchNotificationsEnabled }, set: { _ in toggleNotifications() }))
+                            .labelsHidden()
+                            .tint(Theme.accent)
+                    } else {
+                        Button("Premium") { showPaywall = true }
+                            .font(.subheadline.weight(.semibold))
+                    }
+                }
+                .padding(14)
+            }
+
+            SettingsPanel(title: "GAME ALERTS") {
+                Group {
+                    Menu {
+                        ForEach(MatchReminderLeadTime.allCases) { leadTime in
+                            Button { updateReminderLeadTime(leadTime) } label: {
+                                if prefs.matchReminderLeadTime == leadTime {
+                                    Label(leadTime.label, systemImage: "checkmark")
+                                } else {
+                                    Text(leadTime.label)
+                                }
+                            }
+                        }
+                    } label: {
+                        SettingsDisclosureRow(title: "Game starting", value: reminderValue)
+                    }
+                    Divider().overlay(Theme.hairline)
+                    SettingsToggleRow(title: "Game begins", isOn: Binding(get: { prefs.notificationSettings.liveAlerts }, set: { prefs.setLiveAlertsEnabled($0) }))
+                    Divider().overlay(Theme.hairline)
+                    StaticSwitchRow(title: "Score changes", isOn: true)
+                    Divider().overlay(Theme.hairline)
+                    SettingsToggleRow(title: "Close game", isOn: Binding(get: { prefs.notificationSettings.closeGameAlerts }, set: { prefs.setCloseGameAlertsEnabled($0) }))
+                    Divider().overlay(Theme.hairline)
+                    StaticSwitchRow(title: "Overtime or extra innings", isOn: true)
+                    Divider().overlay(Theme.hairline)
+                    StaticSwitchRow(title: "Final result", isOn: false)
+                }
+                .opacity(prefs.matchNotificationsEnabled ? 1 : 0.42)
+                .disabled(!prefs.matchNotificationsEnabled)
+            }
+
+            SettingsPanel(title: "DAILY") {
+                SettingsToggleRow(title: "Morning Briefing", isOn: Binding(get: { prefs.morningDigestEnabled }, set: { setMorningDigest($0) }))
+                Divider().overlay(Theme.hairline)
+                Menu {
+                    ForEach(Self.briefingHours, id: \.self) { hour in
+                        Button { prefs.setMorningDigestHour(hour) } label: {
+                            if prefs.notificationSettings.morningDigestHour == hour {
+                                Label(Self.hourLabel(hour), systemImage: "checkmark")
+                            } else {
+                                Text(Self.hourLabel(hour))
+                            }
+                        }
+                    }
+                } label: {
+                    SettingsDisclosureRow(title: "Briefing Time", value: Self.hourLabel(prefs.notificationSettings.morningDigestHour))
+                }
+            }
+            .opacity(prefs.matchNotificationsEnabled ? 1 : 0.42)
+
+            SettingsPanel(title: "CALENDAR") {
+                #if !os(tvOS)
+                Button { Task { await exportFollowedGamesToCalendar() } } label: {
+                    SettingsDisclosureRow(title: "Calendar Sync", value: calendarValue)
+                }
+                .disabled(isExportingCalendar)
+                #endif
+                if let calendarExportMessage {
+                    Text(calendarExportMessage)
+                        .font(.footnote)
+                        .foregroundStyle(Theme.textSecondary)
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 10)
+                }
+            }
+        }
+        .sheet(isPresented: $showPaywall) {
+            PaywallView()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+
+    private static let briefingHours = Array(5...12)
+
+    private static func hourLabel(_ hour: Int) -> String {
+        let date = Calendar.current.date(bySettingHour: hour, minute: 0, second: 0, of: Date()) ?? Date()
+        return date.formatted(date: .omitted, time: .shortened)
+    }
+
+    private func setMorningDigest(_ enabled: Bool) {
+        prefs.setMorningDigestEnabled(enabled)
+        if !enabled { Task { await MatchNotificationService.shared.removeMorningDigests() } }
+    }
+
+    private var reminderValue: String {
+        switch prefs.matchReminderLeadTime {
+        case .sixty: "1 hr"
+        case .thirty: "30 min"
+        case .ten: "10 min"
+        case .five: "5 min"
+        }
+    }
+
+    private var calendarValue: String {
+        isExportingCalendar ? "Setting Up" : "Not connected"
+    }
+
+    private func toggleNotifications() {
+        if prefs.matchNotificationsEnabled {
+            prefs.setMatchNotificationsEnabled(false)
+            MatchNotificationService.shared.removeAllMatchNotifications()
+        } else {
+            Task {
+                let granted = await MatchNotificationService.shared.requestAuthorization()
+                prefs.setMatchNotificationsEnabled(granted)
+                if granted { await syncFavoriteGameNotifications() }
+            }
+        }
+    }
+
+    private func updateReminderLeadTime(_ leadTime: MatchReminderLeadTime) {
+        prefs.setMatchReminderLeadTime(leadTime)
+        guard prefs.matchNotificationsEnabled else { return }
+        Task { await syncFavoriteGameNotifications() }
+    }
+
+    private func syncFavoriteGameNotifications() async {
+        let matches = await loadFollowedMatches()
+        await MatchNotificationService.shared.syncNotifications(matches: matches, favorites: prefs.favoriteTeams, settings: prefs.notificationSettings)
+    }
+
+    private func exportFollowedGamesToCalendar() async {
+        #if !os(tvOS)
+        guard !isExportingCalendar else { return }
+        isExportingCalendar = true
+        defer { isExportingCalendar = false }
+        let matches = await loadFollowedMatches()
+        do {
+            let saved = try await MatchCalendarService.shared.add(matches: matches)
+            calendarExportMessage = saved == 1 ? "Added 1 upcoming game to Calendar." : "Added \(saved) upcoming games to Calendar."
+        } catch {
+            calendarExportMessage = error.localizedDescription
+        }
+        #endif
+    }
+
+    private func loadFollowedMatches() async -> [Match] {
+        var matches: [Match] = []
+        await withTaskGroup(of: [Match].self) { group in
+            for league in prefs.followedLeagues {
+                group.addTask {
+                    (try? await SportsRepository.shared.legacyScoreboards(for: league, starting: Date(), days: 7)) ?? []
+                }
+            }
+            for await loaded in group { matches.append(contentsOf: loaded) }
+        }
+        return Dictionary(grouping: matches, by: \.id)
+            .compactMap { $0.value.first }
+            .sorted { $0.date < $1.date }
+    }
+}
+
+struct SavedArticlesSettingsView: View {
+    @EnvironmentObject private var articleLibrary: ArticleLibraryStore
+    @State private var presentedArticle: ESPNArticle?
+
+    var body: some View {
+        SettingsPage(title: "Saved Articles") {
+            if articleLibrary.savedArticles.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "bookmark")
+                        .font(.system(size: 34, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("No saved articles")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Use Save Article from a story menu to keep it here.")
+                        .font(.callout)
+                        .foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(28)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(articleLibrary.savedArticles) { saved in
+                        let article = saved.article
+                        Button { presentedArticle = article } label: {
+                            HStack(alignment: .top, spacing: 12) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(article.categoryLabel)
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(Theme.accent)
+                                    Text(article.headline)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(Theme.textPrimary)
+                                        .lineLimit(2)
+                                    Text("Saved \(saved.savedAt.formatted(date: .abbreviated, time: .shortened))")
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.textSecondary)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                            .padding(14)
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button("Remove Saved Article", systemImage: "bookmark.slash", role: .destructive) {
+                                articleLibrary.unsave(article)
+                            }
+                            #if !os(tvOS)
+                            if let url = article.url {
+                                ShareLink(item: url) {
+                                    Label("Share", systemImage: "square.and.arrow.up")
+                                }
+                            }
+                            #endif
+                        }
+                        if saved.id != articleLibrary.savedArticles.last?.id {
+                            Divider().overlay(Theme.hairline)
+                        }
+                    }
+                }
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+            }
+
+            if !articleLibrary.mutedSources.isEmpty {
+                SettingsPanel(title: "MUTED SOURCES") {
+                    ForEach(Array(articleLibrary.mutedSources).sorted(), id: \.self) { source in
+                        HStack {
+                            Text(source)
+                                .foregroundStyle(Theme.textPrimary)
+                            Spacer()
+                            Button("Unmute") { articleLibrary.unmuteSource(source) }
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Theme.accent)
+                        }
+                        .padding(14)
+                    }
+                }
+            }
+        }
+        .navigationDestination(item: $presentedArticle) { article in
+            ArticleReaderView(article: article)
+        }
+    }
+}
+
+struct PrivacySyncSettingsView: View {
+    @EnvironmentObject private var prefs: PreferencesStore
+    @EnvironmentObject private var watchStore: WatchStore
+    @EnvironmentObject private var articleLibrary: ArticleLibraryStore
+    @State private var lastSyncDate: Date? = CloudSyncService.shared.lastSyncDate
+    @State private var showingDeleteConfirmation = false
+
+    var body: some View {
+        SettingsPage(title: "Privacy & Sync") {
+            SettingsPanel(title: "ICLOUD") {
+                SettingsToggleRow(title: "iCloud Sync", isOn: Binding(get: { prefs.cloudSyncEnabled }, set: { prefs.setCloudSyncEnabled($0) }))
+                Text(syncStatusText)
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+            }
+
+            SettingsPanel(title: "SYNCED DATA") {
+                InfoTextRow("Preferences")
+                Divider().overlay(Theme.hairline)
+                InfoTextRow("Favourite channels")
+                Divider().overlay(Theme.hairline)
+                InfoTextRow("Followed teams and leagues")
+                Divider().overlay(Theme.hairline)
+                InfoTextRow("Watch history")
+            }
+
+            SettingsPanel(title: "DEVICE-ONLY DATA") {
+                InfoTextRow("Playlist credentials")
+                Divider().overlay(Theme.hairline)
+                InfoTextRow("Authentication information")
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "lock.shield.fill")
+                    .foregroundStyle(Theme.accent)
+                Text("Playlist credentials remain encrypted in Keychain and are not uploaded to iCloud.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(14)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+
+            SettingsPanel(title: "DATA CONTROLS") {
+                Button {
+                    watchStore.clearHistory()
+                } label: {
+                    SettingsDisclosureRow(title: "Clear Watch History")
+                }
+                .buttonStyle(.plain)
+                Divider().overlay(Theme.hairline)
+                Button {
+                    articleLibrary.clearRecommendations()
+                } label: {
+                    SettingsDisclosureRow(title: "Reset Recommendations")
+                }
+                .buttonStyle(.plain)
+                Divider().overlay(Theme.hairline)
+                Button {
+                    showingDeleteConfirmation = true
+                } label: {
+                    SettingsDisclosureRow(title: "Delete Local Data", destructive: true)
+                }
+                .buttonStyle(.plain)
+            }
+
+            SettingsPanel(title: "ADVANCED") {
+                Button { prefs.resetOnboarding() } label: {
+                    SettingsDisclosureRow(title: "Redo Setup")
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .bannertvCloudSyncDidChange)) { _ in
+            lastSyncDate = CloudSyncService.shared.lastSyncDate
+        }
+        .confirmationDialog("Delete Local Data", isPresented: $showingDeleteConfirmation, titleVisibility: .visible) {
+            Button("Delete All Local Data", role: .destructive) {
+                watchStore.clearHistory()
+                articleLibrary.clearAll()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will clear your watch history, saved articles, hidden articles, and muted sources. This cannot be undone.")
+        }
+    }
+
+    private var syncStatusText: String {
+        guard prefs.cloudSyncEnabled else { return "Not syncing" }
+        guard let date = lastSyncDate else { return "Not yet synced" }
+        let diff = max(0, Int(Date().timeIntervalSince(date)))
+        if diff < 60 { return "Synced just now" }
+        let minutes = diff / 60
+        if minutes < 60 { return "Last synced \(minutes) minute\(minutes == 1 ? "" : "s") ago" }
+        let hours = minutes / 60
+        return "Last synced \(hours) hour\(hours == 1 ? "" : "s") ago"
+    }
+}
+
+struct WatchHistorySettingsView: View {
+    @EnvironmentObject private var watchStore: WatchStore
+    @State private var showingClearConfirmation = false
+
+    var body: some View {
+        SettingsPage(title: "Watch History") {
+            if watchStore.history.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 34, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                    Text("No watch history")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("Channels you watch will appear here.")
+                        .font(.callout)
+                        .foregroundStyle(Theme.textSecondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(28)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(watchStore.history) { entry in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(entry.saved.name)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Theme.textPrimary)
+                                    .lineLimit(1)
+                                if let group = entry.saved.group {
+                                    Text(group)
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.accent)
+                                        .lineLimit(1)
+                                }
+                            }
+                            Spacer(minLength: 0)
+                            Text(relativeDate(entry.lastWatched))
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        .padding(14)
+                        .platformRowActions {
+                            Button(role: .destructive) {
+                                watchStore.removeFromHistory(entry)
+                            } label: {
+                                Label("Remove", systemImage: "trash")
+                            }
+                        }
+                        if entry.id != watchStore.history.last?.id {
+                            Divider().overlay(Theme.hairline)
+                        }
+                    }
+                }
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+
+                Button(role: .destructive) {
+                    showingClearConfirmation = true
+                } label: {
+                    Text("Clear Watch History")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .confirmationDialog("Clear Watch History", isPresented: $showingClearConfirmation, titleVisibility: .visible) {
+            Button("Clear All History", role: .destructive) {
+                watchStore.clearHistory()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will remove all \(watchStore.history.count) items from your watch history.")
+        }
+    }
+
+    private func relativeDate(_ date: Date) -> String {
+        let diff = max(0, Int(Date().timeIntervalSince(date)))
+        if diff < 60 { return "Just now" }
+        let minutes = diff / 60
+        if minutes < 60 { return "\(minutes)m ago" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h ago" }
+        let days = hours / 24
+        if days == 1 { return "Yesterday" }
+        return "\(days)d ago"
+    }
+}
+
+struct PrivacyPolicySettingsView: View {
+    var body: some View {
+        SettingsPage(title: "Privacy Policy") {
+            SettingsPanel(title: "BANNERTV PRIVACY POLICY") {
+                LegalDocumentText(Self.policyText)
+            }
+        }
+    }
+
+    private static let policyText = """
+BannerTV Privacy Policy
+
+Effective date: July 27, 2026
+
+BannerTV is operated by Alexandre Diab ("BannerTV," "we," "us," or "our").
+
+This Privacy Policy explains how information is handled when you use the BannerTV mobile application ("the App").
+
+1. Overview
+
+BannerTV is a media player and sports information application. It allows users to view sports information and connect playlists or provider credentials that they are authorized to use.
+
+BannerTV does not provide, host, sell, or distribute television channels, playlists, subscriptions, broadcasts, or other media content.
+
+We designed BannerTV to minimize the collection of personal information. The App does not require users to create a BannerTV account.
+
+2. Information handled by the App
+
+Playlist and provider information
+
+When you connect an M3U playlist, stream login account, or another supported source, you may provide information such as:
+
+- Playlist URLs
+- Provider server addresses
+- Usernames
+- Passwords or access credentials
+- Channel and playlist information returned by your provider
+
+This information is used only to connect the App to the source you selected.
+
+Your playlist information and provider credentials are stored locally on your device. We do not receive or store this information on BannerTV-operated servers.
+
+When the App connects to your selected provider, the information required to establish that connection is transmitted directly to that provider. Your provider may receive ordinary network information, including your IP address, device request information, and requested content.
+
+Sports preferences
+
+The App may store information such as:
+
+- Favourite sports
+- Selected leagues
+- Favourite teams
+- Display preferences
+- Recently viewed sections
+- App settings
+
+These preferences are stored locally on your device and are used to personalize your experience.
+
+Fantasy sports
+
+If you connect ESPN Fantasy, BannerTV reads league, roster, matchup, scoring, standing, and player metadata directly from ESPN Fantasy and stores lightweight cache data locally so Fantasy can load efficiently and degrade gracefully offline. Private ESPN Fantasy leagues may require ESPN session cookies; `espn_s2` and `SWID` are stored only in Keychain and are sent only as ESPN Cookie headers.
+
+Sleeper import support is currently disabled in the active product, but previously stored Sleeper data is preserved locally for compatibility if that provider is re-enabled later.
+
+BannerTV does not require a Banner account for imported Fantasy connections and does not send playlist credentials, stream URLs, IPTV provider details, or video traffic to BannerTV-operated servers for Fantasy features.
+
+Sports and news information
+
+The App obtains scores, schedules, standings, statistics, news, and related information from external data services.
+
+When the App requests this information, the external provider may receive technical information normally included in an internet request, such as an IP address, request time, and basic device or application information.
+
+The App uses the following external services:
+
+- ESPN
+
+The privacy practices of these services are governed by their own privacy policies.
+
+Support communications
+
+When you contact us for support, we may receive:
+
+- Your email address
+- Your name, if provided
+- The content of your message
+- Device or diagnostic information you voluntarily include
+- Screenshots or attachments you voluntarily provide
+
+We use this information only to respond to your request, troubleshoot problems, protect the App, and maintain support records.
+
+Do not send playlist passwords, provider credentials, or other sensitive information through support email.
+
+3. How information is used
+
+Information handled through BannerTV may be used to:
+
+- Connect to playlists and providers selected by the user
+- Display content from a connected source
+- Personalize sports, league, and team information
+- Provide scores, schedules, standings, statistics, and news
+- Save app preferences
+- Diagnose technical problems
+- Respond to support requests
+- Maintain the security and functionality of the App
+- Comply with applicable legal obligations
+
+We do not use personal information for targeted advertising.
+
+4. Advertising, tracking, and sale of information
+
+BannerTV does not:
+
+- Display third-party advertisements
+- Track users across applications or websites
+- Create advertising profiles
+- Sell or rent personal information
+- Share personal information with data brokers
+
+This section must be updated before introducing advertising, tracking, attribution, or behavioural analytics technology.
+
+5. Sharing of information
+
+We do not share personal information except in the following circumstances:
+
+User-selected providers
+
+Information necessary to connect to an M3U, stream login, or other source is sent to the provider selected by the user.
+
+BannerTV does not control these providers and is not responsible for their privacy or security practices.
+
+Service providers
+
+Information may be processed by services that help provide sports data, news, technical infrastructure, or customer support. These services may only process information for the purposes associated with their services and are expected to protect it appropriately.
+
+Legal requirements
+
+We may disclose information when reasonably necessary to:
+
+- Comply with a law, regulation, court order, or valid legal request
+- Protect the rights, safety, and security of users or others
+- Investigate fraud, abuse, or security incidents
+- Enforce applicable agreements
+
+6. Storage and security
+
+Playlist information, provider credentials, preferences, and settings are designed to remain on the user's device.
+
+We use reasonable administrative and technical measures intended to protect information handled by the App. However, no electronic storage or internet transmission method can be guaranteed to be completely secure.
+
+Users are responsible for protecting their devices and provider credentials. We recommend using a device passcode and avoiding playlists or providers that you do not trust.
+
+7. Retention and deletion
+
+Locally stored preferences remain on your device until you remove them, reset the App, or delete the App.
+
+You may remove connected playlists and provider credentials through the App's playlist-management settings.
+
+Support emails and related communications may be retained only for as long as reasonably necessary to respond to the request, maintain business records, resolve disputes, prevent abuse, and comply with legal obligations.
+
+Because BannerTV does not require a user account and does not store playlist credentials on its own servers, there is normally no BannerTV account or associated server profile to delete.
+
+To request access to or deletion of information you previously submitted through customer support, contact us using the email address below.
+
+8. Your choices
+
+You may:
+
+- Choose whether to connect a playlist or provider
+- Remove a connected playlist
+- Remove saved provider credentials
+- Change your favourite sports, leagues, and teams
+- Reset locally stored preferences
+- Stop using the App and delete it from your device
+- Contact us regarding support information you previously submitted
+
+Removing a connected source does not delete information separately held by that source's provider. You must contact the provider directly regarding information it controls.
+
+9. Children's privacy
+
+BannerTV does not require users to provide their age and is not designed to intentionally collect personal information from children.
+
+We do not knowingly collect personal information from children under 13. A parent or guardian who believes a child has submitted personal information through a support request may contact us to request its deletion.
+
+10. International processing
+
+External playlist providers, sports-data services, news services, email providers, or infrastructure providers may process information in countries other than your own.
+
+Information processed in another country may be subject to that country's laws and lawful access requirements.
+
+11. Third-party content and links
+
+BannerTV may display information or content obtained from third parties or allow users to connect to third-party services.
+
+We do not control the privacy, security, availability, legality, or content practices of user-selected providers or external services. Users should review the terms and privacy policies of each service they use.
+
+12. Changes to this policy
+
+We may update this Privacy Policy when the App, applicable laws, or our information-handling practices change.
+
+The updated policy will display a revised effective date. Where required, we will provide additional notice within the App or request consent before introducing a materially different use of personal information.
+
+13. Contact us
+
+Questions, privacy requests, or concerns may be sent to:
+
+BannerTV Privacy
+Alexandre Diab
+Email: alexdiabmusic@gmail.com
+Country: Canada
+
+Please use the subject line "BannerTV Privacy Request."
+"""
+}
+
+struct AboutBannerTVSettingsView: View {
+    var body: some View {
+        SettingsPage(title: "About BannerTV") {
+            SettingsPanel(title: "METADATA") {
+                Text("External movie and series metadata is disabled until an authorized provider configuration is supplied.")
+                Text("This product uses the TMDB API but is not endorsed or certified by TMDB.")
+                if let url = URL(string: "https://www.themoviedb.org") { Link("The Movie Database", destination: url) }
+            }
+            SettingsPanel(title: "ABOUT BANNERTV") {
+                LegalDocumentText(Self.aboutText)
+            }
+        }
+    }
+
+    private static let aboutText = """
+BannerTV brings sports, scores, schedules, news, and your own authorized playlists together in one fast, modern experience.
+
+Stay connected to the sports you love by following your favourite teams and leagues, tracking live scores, exploring player statistics, and quickly accessing your own linked sources - all from one app.
+
+Features
+
+- Live Scores & Game Tracking
+Follow games in real time with live scores, game status, schedules, and matchup information.
+
+- Personalized Sports Feed
+Choose the sports, leagues, and teams you care about to create a home screen tailored to you.
+
+- Follow Your Favourite Teams
+Receive quick access to upcoming games, live matchups, standings, and team updates.
+
+- Player Profiles & Statistics
+Explore player bios, season statistics, rosters, and team information across supported sports.
+
+- Sports News
+Stay informed with the latest headlines and updates from the sports you follow.
+
+- Your Authorized Sources
+Connect your own compatible playlists or provider credentials to access your authorized content within a single, organized interface.
+
+- Multi-View Support
+Watch multiple authorized sources simultaneously with an optimized split-screen experience.*
+
+- Fast, Beautiful Interface
+Built for speed with an intuitive design that makes navigating sports effortless.
+
+Sports Supported
+
+Football
+Basketball
+Baseball
+Hockey
+Soccer
+Racing
+Golf
+And more
+
+Whether you're checking scores throughout the day, keeping up with your favourite teams, or organizing your own authorized viewing sources, BannerTV helps keep everything in one place.
+
+Important: BannerTV does not provide, host, or distribute television channels, sports broadcasts, or media content. Users are responsible for providing their own authorized playlists or provider credentials and must ensure they have the rights to access any content viewed through the app.
+
+*Availability of features depends on connected sources and supported providers.
+"""
+}
+
+struct HelpFeedbackSettingsView: View {
+    var body: some View {
+        SettingsPage(title: "Help & Feedback") {
+            SettingsPanel(title: "GET HELP") {
+                LegalDocumentText("""
+If something is not working as expected, send a support message with a short description of the issue, the sport or source involved, and any steps that reproduce the problem.
+
+For playlist or provider issues, include the provider type and the error you see, but do not send playlist passwords, provider credentials, or other sensitive information.
+
+Support email: alexdiabmusic@gmail.com
+
+Suggested subject: BannerTV Support
+""")
+            }
+
+            SettingsPanel(title: "FEEDBACK") {
+                LegalDocumentText("""
+Feature ideas, sports coverage requests, bug reports, and design feedback are welcome. Feedback helps prioritize improvements to scores, schedules, team following, player stats, news, and authorized source playback.
+""")
+            }
+        }
+    }
+}
+
+struct FantasySettingsView: View {
+    @EnvironmentObject private var fantasyStore: FantasyStore
+    @EnvironmentObject private var nativeFantasyStore: BannerFantasyStore
+    @EnvironmentObject private var playlists: PlaylistStore
+    @EnvironmentObject private var prefs: PreferencesStore
+    @State private var showingConnect = false
+    @State private var showingESPNConnect = false
+    @State private var showingDisconnectConfirmation = false
+    @State private var showingNativeResetConfirmation = false
+    @State private var nativeExportSummary: String?
+
+    var body: some View {
+        SettingsPage(title: "Fantasy") {
+            SettingsPanel(title: "BANNER FANTASY") {
+                if let bundle = nativeFantasyStore.selectedBundle {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "hockey.puck.fill")
+                                .foregroundStyle(Theme.accent)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(bundle.league.name)
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(Theme.textPrimary)
+                                Text("\(bundle.teams.count)/\(bundle.league.maxTeams) teams · Invite \(bundle.league.inviteCode)")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                            Spacer()
+                        }
+                    }
+                    .padding(14)
+                } else {
+                    InfoTextRow("Create or join a native Banner Fantasy league from Following → Fantasy.")
+                }
+            }
+
+            SettingsPanel(title: "LOCAL DATA") {
+                VStack(spacing: 0) {
+                    Button {
+                        Task {
+                            if let export = await nativeFantasyStore.exportData() {
+                                nativeExportSummary = "Export ready · v\(export.schemaVersion) · \(export.bundles.count) leagues"
+                            }
+                        }
+                    } label: {
+                        SettingsDisclosureRow(title: "Export Fantasy Data", value: nativeExportSummary ?? "Local backup")
+                    }
+                    .buttonStyle(.plain)
+                    Divider().overlay(Theme.hairline)
+                    Button(role: .destructive) { showingNativeResetConfirmation = true } label: {
+                        SettingsDisclosureRow(title: "Reset Local Fantasy Data", destructive: true)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            SettingsPanel(title: "IMPORT PROVIDERS") {
+                if let connection = fantasyStore.currentConnection {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Theme.upcoming)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(connection.displayName ?? connection.username ?? connection.provider.displayName)
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(Theme.textPrimary)
+                                Text("\(connection.provider.displayName) · ID \(connection.providerUserID)")
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.textSecondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            Spacer()
+                        }
+                        if fantasyStore.isStale {
+                            Label("Using cached Fantasy data", systemImage: "wifi.slash")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Theme.starting)
+                        }
+                    }
+                    .padding(14)
+                } else {
+                    if AppConfiguration.isESPNFantasyProviderEnabled {
+                        Button { showingESPNConnect = true } label: {
+                            SettingsDisclosureRow(title: "Connect ESPN Fantasy", value: "NFL · NHL · NBA · MLB")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if AppConfiguration.isSleeperFantasyProviderEnabled {
+                        if AppConfiguration.isESPNFantasyProviderEnabled { Divider().overlay(Theme.hairline) }
+                        Button { showingConnect = true } label: {
+                            SettingsDisclosureRow(title: "Connect Sleeper", value: "NFL")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            SettingsPanel(title: "DEFAULT IMPORTED LEAGUE") {
+                if fantasyStore.leagues.isEmpty {
+                    InfoTextRow(fantasyStore.currentConnection == nil ? "Connect an import provider to load external leagues." : "No imported Fantasy leagues are available for the current season.")
+                } else {
+                    Menu {
+                        ForEach(fantasyStore.leagues) { league in
+                            Button {
+                                Task { await fantasyStore.selectLeague(id: league.id, channels: playlists.allChannels, preferredLanguages: prefs.preferredStreamLanguages) }
+                            } label: {
+                                if fantasyStore.selectedLeague?.id == league.id {
+                                    Label(league.name, systemImage: "checkmark")
+                                } else {
+                                    Text(league.name)
+                                }
+                            }
+                        }
+                    } label: {
+                        SettingsDisclosureRow(title: "Default League", value: fantasyStore.selectedLeague?.name ?? "Choose")
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            SettingsPanel(title: "DISPLAY") {
+                SettingsToggleRow(title: "Show Fantasy on Home", isOn: fantasyBinding(\.showFantasyOnHome) { await fantasyStore.setShowFantasyOnHome($0) })
+                Divider().overlay(Theme.hairline)
+                SettingsToggleRow(title: "Fantasy Indicators in Live", isOn: fantasyBinding(\.showFantasyIndicatorsInLive) { await fantasyStore.setShowFantasyIndicatorsInLive($0) })
+                Divider().overlay(Theme.hairline)
+                SettingsToggleRow(title: "Fantasy Indicators in Guide", isOn: fantasyBinding(\.showFantasyIndicatorsInGuide) { await fantasyStore.setShowFantasyIndicatorsInGuide($0) })
+                Divider().overlay(Theme.hairline)
+                SettingsToggleRow(title: "Fantasy Player Overlay", isOn: fantasyBinding(\.showFantasyPlayerOverlay) { await fantasyStore.setShowFantasyPlayerOverlay($0) })
+                #if !os(tvOS)
+                Divider().overlay(Theme.hairline)
+                SettingsToggleRow(title: "Fantasy Notifications", isOn: fantasyBinding(\.enableNotifications) { await fantasyStore.setEnableNotifications($0) })
+                #endif
+            }
+
+            SettingsPanel(title: "DIAGNOSTICS") {
+                VStack(spacing: 0) {
+                    DiagnosticValueRow(title: "Provider", value: fantasyStore.diagnostics.provider?.displayName ?? "None")
+                    Divider().overlay(Theme.hairline)
+                    DiagnosticValueRow(title: "State", value: contentStateText(fantasyStore.diagnostics.contentState))
+                    Divider().overlay(Theme.hairline)
+                    DiagnosticValueRow(title: "Leagues", value: "\(fantasyStore.diagnostics.leagueCount)")
+                    Divider().overlay(Theme.hairline)
+                    DiagnosticValueRow(title: "Roster Players", value: "\(fantasyStore.diagnostics.rosterPlayerCount)")
+                    Divider().overlay(Theme.hairline)
+                    DiagnosticValueRow(title: "Linked Games", value: "\(fantasyStore.diagnostics.linkedGameCount)")
+                    Divider().overlay(Theme.hairline)
+                    DiagnosticValueRow(title: "Watchable", value: "\(fantasyStore.diagnostics.watchableGameCount)")
+                    Divider().overlay(Theme.hairline)
+                    DiagnosticValueRow(title: "Unresolved", value: "\(fantasyStore.diagnostics.unresolvedPlayerCount)")
+                    Divider().overlay(Theme.hairline)
+                    DiagnosticValueRow(title: "Last Refresh", value: lastRefreshText)
+                }
+            }
+
+            if fantasyStore.currentConnection != nil {
+                SettingsPanel(title: "ACTIONS") {
+                    Button(role: .destructive) { showingDisconnectConfirmation = true } label: {
+                        SettingsDisclosureRow(title: "Disconnect \(fantasyStore.currentConnection?.provider.displayName ?? "Fantasy")", destructive: true)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .sheet(isPresented: $showingConnect) {
+            SleeperConnectSheet(channels: playlists.allChannels, preferredLanguages: prefs.preferredStreamLanguages)
+        }
+        .sheet(isPresented: $showingESPNConnect) {
+            ESPNFantasyConnectSheet(channels: playlists.allChannels, preferredLanguages: prefs.preferredStreamLanguages)
+        }
+        .confirmationDialog("Disconnect Fantasy?", isPresented: $showingDisconnectConfirmation, titleVisibility: .visible) {
+            Button("Disconnect", role: .destructive) {
+                Task { await fantasyStore.disconnect() }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the local Fantasy connection, provider credentials and Fantasy caches without changing playlists, favourites or other Banner settings.")
+        }
+        .confirmationDialog("Reset Local Fantasy Data?", isPresented: $showingNativeResetConfirmation, titleVisibility: .visible) {
+            Button("Reset Local Fantasy Data", role: .destructive) {
+                Task {
+                    await nativeFantasyStore.resetLocalData()
+                    nativeExportSummary = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes Banner Fantasy teams, local leagues, rosters, lineups and transactions. It does not change IPTV playlists, favourites or imported ESPN Fantasy credentials.")
+        }
+        .task {
+            await nativeFantasyStore.load()
+            await fantasyStore.refresh(channels: playlists.allChannels, preferredLanguages: prefs.preferredStreamLanguages)
+        }
+    }
+
+    private var lastRefreshText: String {
+        guard let refreshedAt = fantasyStore.diagnostics.refreshedAt else { return "Never" }
+        return refreshedAt.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private func fantasyBinding(_ keyPath: KeyPath<FantasySettings, Bool>, setter: @escaping (Bool) async -> Void) -> Binding<Bool> {
+        Binding(
+            get: { fantasyStore.settings[keyPath: keyPath] },
+            set: { value in Task { await setter(value) } }
+        )
+    }
+
+    private func contentStateText(_ state: FantasyContentState) -> String {
+        switch state {
+        case .disconnected: return "Disconnected"
+        case .loading: return "Loading"
+        case .noLeagues: return "No leagues"
+        case .preDraft: return "Pre-draft"
+        case .inSeason: return "In season"
+        case .seasonComplete: return "Season complete"
+        case .offSeason: return "Off-season"
+        case .noCurrentMatchup: return "No matchup"
+        case .noFantasyPlayersToday: return "No games today"
+        case .playersScheduled: return "Players scheduled"
+        case .playersLive: return "Players live"
+        case .partialData: return "Partial data"
+        case .providerUnavailable: return "Provider unavailable"
+        case .offlineWithCachedData: return "Offline cached"
+        }
+    }
+}
+
+struct ESPNFantasyConnectSheet: View {
+    let channels: [Channel]
+    let preferredLanguages: Set<String>
+
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var fantasyStore: FantasyStore
+    @State private var selectedSport: FantasySport = .nhl
+    @State private var leagueID = ""
+    @State private var seasonID = String(Calendar.current.component(.year, from: Date()))
+    @State private var teamID = ""
+    @State private var espnS2 = ""
+    @State private var swid = ""
+    @State private var includePrivateCredentials = false
+    @State private var webAuthenticator = ESPNWebAuthenticator()
+    @State private var isSigningIn = false
+    @State private var signedInViaWeb = false
+    @State private var webAuthError: String?
+    @State private var isDiscoveringLeagues = false
+    @State private var discoveredLeagues: [ESPNDiscoveredLeague] = []
+    @State private var discoveryError: String?
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.background.ignoresSafeArea()
+                Form {
+                    Section("League") {
+                        Picker("Sport", selection: $selectedSport) {
+                            ForEach(FantasySport.allCases) { sport in
+                                Label(sport.longDisplayName, systemImage: sport.symbolName).tag(sport)
+                            }
+                        }
+                        TextField("League ID", text: $leagueID)
+                            #if os(iOS)
+                            .keyboardType(.numberPad)
+                            #endif
+                        TextField("Season", text: $seasonID)
+                            #if os(iOS)
+                            .keyboardType(.numberPad)
+                            #endif
+                        TextField("Your team ID", text: $teamID)
+                            #if os(iOS)
+                            .keyboardType(.numberPad)
+                            #endif
+                        Text("For public leagues, enter your ESPN Fantasy team ID so Banner knows which roster is yours.")
+                            .font(.footnote)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+
+                    Section("Private League") {
+                        if signedInViaWeb {
+                            Label("Signed in to ESPN", systemImage: "checkmark.seal.fill")
+                                .foregroundStyle(.green)
+
+                            if isDiscoveringLeagues {
+                                HStack {
+                                    Text("Finding your leagues…")
+                                    Spacer()
+                                    ProgressView()
+                                }
+                            } else if !discoveredLeagues.isEmpty {
+                                ForEach(discoveredLeagues) { league in
+                                    Button {
+                                        selectedSport = league.sport
+                                        leagueID = league.leagueID
+                                        seasonID = String(league.seasonID)
+                                    } label: {
+                                        HStack {
+                                            Label(league.teamName ?? "League \(league.leagueID)", systemImage: league.sport.symbolName)
+                                                .foregroundStyle(Theme.textPrimary)
+                                            Spacer()
+                                            if selectedSport == league.sport, leagueID == league.leagueID, seasonID == String(league.seasonID) {
+                                                Image(systemName: "checkmark")
+                                                    .foregroundStyle(Theme.accent)
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                Text(discoveryError ?? "Banner couldn't find any leagues automatically for this account. Enter the League ID above manually.")
+                                    .font(.footnote)
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+
+                            Button("Sign in with a different ESPN account") {
+                                signedInViaWeb = false
+                                includePrivateCredentials = false
+                                espnS2 = ""
+                                swid = ""
+                                discoveredLeagues = []
+                                discoveryError = nil
+                            }
+                        } else {
+                            Button {
+                                Task {
+                                    isSigningIn = true
+                                    webAuthError = nil
+                                    do {
+                                        let credentials = try await webAuthenticator.signIn()
+                                        espnS2 = credentials.espnS2
+                                        swid = credentials.swid
+                                        includePrivateCredentials = true
+                                        signedInViaWeb = true
+                                        await discoverLeagues(credentials: credentials)
+                                    } catch {
+                                        webAuthError = error.localizedDescription
+                                    }
+                                    isSigningIn = false
+                                }
+                            } label: {
+                                HStack {
+                                    Text(isSigningIn ? "Signing in…" : "Sign in with ESPN")
+                                    if isSigningIn {
+                                        Spacer()
+                                        ProgressView()
+                                    }
+                                }
+                            }
+                            .disabled(isSigningIn)
+
+                            if let webAuthError {
+                                Text(webAuthError)
+                                    .font(.footnote)
+                                    .foregroundStyle(Theme.starting)
+                            }
+
+                            Text("Sign in with ESPN to connect a private league without finding or pasting cookie values yourself. Banner only reads the resulting session cookies — never your ESPN password.")
+                                .font(.footnote)
+                                .foregroundStyle(Theme.textSecondary)
+
+                            Toggle("Enter session cookies manually instead", isOn: $includePrivateCredentials)
+                            if includePrivateCredentials {
+                                SecureField("espn_s2", text: $espnS2)
+                                    #if os(iOS)
+                                    .textInputAutocapitalization(.never)
+                                    #endif
+                                    .autocorrectionDisabled()
+                                SecureField("SWID", text: $swid)
+                                    #if os(iOS)
+                                    .textInputAutocapitalization(.never)
+                                    #endif
+                                    .autocorrectionDisabled()
+                                Text("These values are stored in Keychain and sent only as ESPN Cookie headers. Never enter your ESPN password.")
+                                    .font(.footnote)
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                        }
+                    }
+
+                    if let error = fantasyStore.lastError {
+                        Section {
+                            Text(error)
+                                .foregroundStyle(Theme.starting)
+                        }
+                    }
+                }
+                .hidesScrollContentBackground()
+            }
+            .navigationTitle("ESPN Fantasy")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Connect") {
+                        Task {
+                            await fantasyStore.connectESPNFantasy(
+                                sport: selectedSport,
+                                leagueID: leagueID,
+                                seasonID: Int(seasonID) ?? Calendar.current.component(.year, from: Date()),
+                                teamID: Int(teamID),
+                                espnS2: includePrivateCredentials ? espnS2 : nil,
+                                swid: includePrivateCredentials ? swid : nil,
+                                channels: channels,
+                                preferredLanguages: preferredLanguages
+                            )
+                            if fantasyStore.currentConnection?.provider == .espn { dismiss() }
+                        }
+                    }
+                    .disabled(leagueID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+
+    private func discoverLeagues(credentials: ESPNFantasyCredentials) async {
+        isDiscoveringLeagues = true
+        discoveryError = nil
+        do {
+            let leagues = try await ESPNFanLeagueDiscoveryClient().discoverLeagues(credentials: credentials)
+            discoveredLeagues = leagues
+            if let first = leagues.first {
+                selectedSport = first.sport
+                leagueID = first.leagueID
+                seasonID = String(first.seasonID)
+            }
+        } catch {
+            discoveredLeagues = []
+            discoveryError = error.localizedDescription
+        }
+        isDiscoveringLeagues = false
+    }
+}
+
+// MARK: - Player & Playback Settings
+
+struct PlayerPlaybackSettingsView: View {
+    @EnvironmentObject private var prefs: PreferencesStore
+
+    var body: some View {
+        SettingsPage(title: "Player & Playback") {
+            SettingsPanel(title: "STREAM LANGUAGE") {
+                Menu {
+                    ForEach(StreamLanguage.all) { language in
+                        Button { prefs.setDefaultStreamLanguage(language) } label: {
+                            if prefs.isStreamLanguageSelected(language) {
+                                Label(language.name, systemImage: "checkmark")
+                            } else {
+                                Text(language.name)
+                            }
+                        }
+                    }
+                } label: {
+                    SettingsDisclosureRow(title: "Preferred Language", value: defaultStreamLanguageName)
+                }
+            }
+
+            SettingsPanel(title: "SCORES") {
+                SettingsToggleRow(
+                    title: "Spoiler-Free Mode",
+                    isOn: Binding(get: { prefs.spoilerFreeMode }, set: { prefs.setSpoilerFreeMode($0) })
+                )
+                Text("Hides completed-game scores and result headlines.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+                Divider().overlay(Theme.hairline)
+                SettingsToggleRow(
+                    title: "Live Score Overlay",
+                    isOn: Binding(get: { prefs.showLiveScoreBadge }, set: { prefs.setShowLiveScoreBadge($0) })
+                )
+                Divider().overlay(Theme.hairline)
+                SettingsToggleRow(
+                    title: "Live Score Bar",
+                    isOn: Binding(get: { prefs.showLiveScoreBar }, set: { prefs.setShowLiveScoreBar($0) })
+                )
+                Text("Shows a red accent bar at the top of live match cards.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+            }
+
+            SettingsPanel(title: "CONTROLS") {
+                Menu {
+                    ForEach([2, 4, 8, 15, 30], id: \.self) { seconds in
+                        Button { prefs.setPlayerPanelTimeoutSeconds(seconds) } label: {
+                            if prefs.playerPanelTimeoutSeconds == seconds {
+                                Label("\(seconds) seconds", systemImage: "checkmark")
+                            } else {
+                                Text("\(seconds) seconds")
+                            }
+                        }
+                    }
+                } label: {
+                    SettingsDisclosureRow(title: "Controls Hide After", value: "\(prefs.playerPanelTimeoutSeconds)s")
+                }
+            }
+
+            SettingsPanel(title: "STREAMS") {
+                Menu {
+                    ForEach(PlayerBufferProfile.allCases) { profile in
+                        Button { prefs.setPlayerBufferProfile(profile) } label: {
+                            if prefs.playerBufferProfile == profile {
+                                Label(profile.rawValue, systemImage: "checkmark")
+                            } else {
+                                Text(profile.rawValue)
+                            }
+                        }
+                    }
+                } label: {
+                    SettingsDisclosureRow(title: "Buffer", value: prefs.playerBufferProfile.rawValue)
+                }
+                Text(prefs.playerBufferProfile.description + ". Applies from the next channel.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+                Divider().overlay(Theme.hairline)
+                SettingsToggleRow(
+                    title: "Stream Engine",
+                    isOn: Binding(get: { prefs.playerStreamEngineEnabled }, set: { prefs.setPlayerStreamEngineEnabled($0) })
+                )
+                Text("Holds the provider connection itself and keeps a reserve of programme ahead of the picture, so server pauses, dropped connections and stream restarts are bridged without freezing or reloading. Turn off only to troubleshoot a provider.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+                Divider().overlay(Theme.hairline)
+                SettingsToggleRow(
+                    title: "Instant Start",
+                    isOn: Binding(get: { prefs.playerNativeRendererEnabled }, set: { prefs.setPlayerNativeRendererEnabled($0) })
+                )
+                .disabled(!prefs.playerStreamEngineEnabled)
+                Text("Shows live channels from their first frame with BannerTV's own video renderer instead of waiting for Apple's player to buffer. Channels it can't show, and AirPlay, use Apple's player. Applies from the next channel.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+                Divider().overlay(Theme.hairline)
+                SettingsToggleRow(
+                    title: "Prefer 4K Streams",
+                    isOn: Binding(get: { prefs.preferUHDStreams }, set: { prefs.setPreferUHDStreams($0) })
+                )
+                Text("Auto normally starts on 1080p or 720p, which start faster. Turn on to try 4K sources first.")
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 10)
+            }
+        }
+    }
+
+    private var defaultStreamLanguageName: String {
+        let code = prefs.preferredStreamLanguages.first ?? "en"
+        return StreamLanguage.all.first { $0.code == code }?.name ?? "English"
+    }
+}
+
+// MARK: - Live TV & Guide Settings
+
+struct LiveTVGuideSettingsView: View {
+    @EnvironmentObject private var prefs: PreferencesStore
+    @EnvironmentObject private var epgRepository: EPGRepository
+
+    var body: some View {
+        SettingsPage(title: "Live TV & Guide") {
+            SettingsPanel(title: "GUIDE APPEARANCE") {
+                SettingsToggleRow(
+                    title: "Show Channel Numbers",
+                    isOn: Binding(get: { prefs.showChannelNumbers }, set: { prefs.setShowChannelNumbers($0) })
+                )
+                Divider().overlay(Theme.hairline)
+                SettingsToggleRow(
+                    title: "Highlight Current Programme",
+                    isOn: Binding(get: { prefs.epgHighlightCurrentProgramme }, set: { prefs.setEPGHighlightCurrentProgramme($0) })
+                )
+                Divider().overlay(Theme.hairline)
+                Menu {
+                    ForEach([1, 2], id: \.self) { lines in
+                        Button { prefs.setGuideProgrammeTitleLines(lines) } label: {
+                            let label = lines == 1 ? "1 line (Compact)" : "2 lines (Standard)"
+                            if prefs.guideProgrammeTitleLines == lines {
+                                Label(label, systemImage: "checkmark")
+                            } else {
+                                Text(label)
+                            }
+                        }
+                    }
+                } label: {
+                    SettingsDisclosureRow(
+                        title: "Programme Title Lines",
+                        value: prefs.guideProgrammeTitleLines == 1 ? "Compact" : "Standard"
+                    )
+                }
+            }
+
+            SettingsPanel(title: "TIME SCALE") {
+                Menu {
+                    ForEach([30, 60, 90, 120], id: \.self) { minutes in
+                        Button { prefs.setGuideTimeScaleMinutes(minutes) } label: {
+                            let label = minutes < 60 ? "\(minutes) min" : "\(minutes / 60) hour"
+                            if prefs.guideTimeScaleMinutes == minutes {
+                                Label(label, systemImage: "checkmark")
+                            } else {
+                                Text(label)
+                            }
+                        }
+                    }
+                } label: {
+                    SettingsDisclosureRow(title: "Time Window", value: guideTimeLabel)
+                }
+            }
+
+            SettingsPanel(title: "EPG STATUS") {
+                DiagnosticValueRow(title: "Status", value: epgStatusText)
+                Divider().overlay(Theme.hairline)
+                DiagnosticValueRow(title: "Last Updated", value: epgLastUpdatedText)
+                Divider().overlay(Theme.hairline)
+                Button {
+                    Task { await epgRepository.forceRefresh() }
+                } label: {
+                    SettingsDisclosureRow(
+                        title: "Refresh Guide Now",
+                        value: epgRepository.refreshState == .refreshing ? "Updating…" : nil
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(epgRepository.refreshState == .refreshing)
+            }
+        }
+    }
+
+    private var guideTimeLabel: String {
+        let m = prefs.guideTimeScaleMinutes
+        return m < 60 ? "\(m) min" : "\(m / 60) hour"
+    }
+
+    private var epgStatusText: String {
+        switch epgRepository.refreshState {
+        case .idle:       return epgRepository.lastUpdated != nil ? "Ready" : "Not yet updated"
+        case .refreshing: return "Updating…"
+        case .failed(let msg): return "Failed — \(msg)"
+        }
+    }
+
+    private var epgLastUpdatedText: String {
+        guard let date = epgRepository.lastUpdated else { return "Never" }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+// MARK: - Appearance Settings
+
+struct AppearanceSettingsView: View {
+    @EnvironmentObject private var prefs: PreferencesStore
+
+    var body: some View {
+        SettingsPage(title: "Appearance") {
+            SettingsPanel(title: "THEME") {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 10) {
+                        ForEach(AppAppearance.allCases) { appearance in
+                            AppearanceThemeCard(
+                                appearance: appearance,
+                                isSelected: prefs.appearance == appearance
+                            ) {
+                                withAnimation(.spring(response: 0.22, dampingFraction: 0.75)) {
+                                    prefs.setAppearance(appearance)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(14)
+            }
+        }
+    }
+}
+
+private struct AppearanceThemeCard: View {
+    let appearance: AppAppearance
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous)
+                        .fill(previewBackground)
+                        .frame(height: 56)
+
+                    VStack(spacing: 5) {
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .fill(Theme.accent)
+                            .frame(height: 7)
+                            .padding(.horizontal, 10)
+                            .padding(.top, 10)
+                        HStack(spacing: 5) {
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .fill(previewCard)
+                                .frame(height: 16)
+                            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                .fill(previewCard)
+                                .frame(height: 16)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 8)
+                    }
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous)
+                        .strokeBorder(isSelected ? Theme.accent : Theme.hairline, lineWidth: isSelected ? 1.5 : 0.5)
+                )
+
+                Text(appearance.label)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isSelected ? Theme.accent : Theme.textSecondary)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isSelected ? 1.03 : 1.0)
+        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isSelected)
+        .accessibilityLabel(appearance.label)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var previewBackground: Color {
+        switch appearance {
+        case .dark:   return Theme.Palette.nearBlack
+        case .light:  return Theme.Palette.cloud
+        case .system:
+            #if os(iOS)
+            return Color(UIColor.systemBackground)
+            #elseif os(macOS)
+            return Color(NSColor.windowBackgroundColor)
+            #else
+            return Theme.background
+            #endif
+        }
+    }
+
+    private var previewCard: Color {
+        switch appearance {
+        case .dark:   return Theme.Palette.slate
+        case .light:  return Theme.Palette.mist
+        case .system:
+            #if os(iOS)
+            return Color(UIColor.secondarySystemBackground)
+            #elseif os(macOS)
+            return Color(NSColor.controlBackgroundColor)
+            #else
+            return Theme.surfaceElevated
+            #endif
+        }
+    }
+}
+
+// MARK: - System Status View
+
+struct BannerSystemStatusView: View {
+    @EnvironmentObject private var playlists: PlaylistStore
+    @EnvironmentObject private var epgRepository: EPGRepository
+    @EnvironmentObject private var prefs: PreferencesStore
+
+    var body: some View {
+        SettingsPage(title: "System Status") {
+            SettingsPanel(title: "SERVICES") {
+                DiagnosticValueRow(title: "Streams", value: streamsStatus)
+                Divider().overlay(Theme.hairline)
+                DiagnosticValueRow(title: "Guide (EPG)", value: guideStatus)
+                Divider().overlay(Theme.hairline)
+                DiagnosticValueRow(title: "Last Guide Update", value: lastUpdateText)
+                Divider().overlay(Theme.hairline)
+                DiagnosticValueRow(title: "iCloud Sync", value: prefs.cloudSyncEnabled ? "Enabled" : "Disabled")
+            }
+
+            SettingsPanel(title: "PLAYLISTS") {
+                if playlists.playlists.isEmpty {
+                    InfoTextRow("No playlists connected.")
+                } else {
+                    ForEach(Array(playlists.playlists.enumerated()), id: \.element.id) { index, playlist in
+                        DiagnosticValueRow(
+                            title: playlist.name,
+                            value: "\(playlists.channelCount(for: playlist)) channels"
+                        )
+                        if index < playlists.playlists.count - 1 {
+                            Divider().overlay(Theme.hairline)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var streamsStatus: String {
+        let count = playlists.playlists.count
+        if count == 0 { return "No playlists" }
+        let total = playlists.playlists.reduce(0) { $0 + playlists.channelCount(for: $1) }
+        return "\(count) playlist\(count == 1 ? "" : "s") · \(total) channels"
+    }
+
+    private var guideStatus: String {
+        switch epgRepository.refreshState {
+        case .idle:           return epgRepository.lastUpdated != nil ? "Ready" : "Not yet updated"
+        case .refreshing:     return "Updating…"
+        case .failed(let msg): return "Failed — \(msg)"
+        }
+    }
+
+    private var lastUpdateText: String {
+        guard let date = epgRepository.lastUpdated else { return "Never" }
+        return date.formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+private struct DiagnosticValueRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(.body)
+                .foregroundStyle(Theme.textPrimary)
+            Spacer()
+            Text(value)
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 44)
+    }
+}
+
+private struct LegalDocumentText: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(Theme.textPrimary)
+            .lineSpacing(5)
+            #if !os(tvOS)
+            .textSelection(.enabled)
+            #endif
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+    }
+}
+
+private struct PlaylistConnectionRow: View {
+    @EnvironmentObject private var playlists: PlaylistStore
+    let playlist: Playlist
+    let refresh: () -> Void
+    let edit: () -> Void
+    let makeDefault: () -> Void
+    let delete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(playlist.name)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Text("\(playlists.channelCount(for: playlist)) channels")
+                .font(.subheadline)
+                .foregroundStyle(Theme.textSecondary)
+            HStack(spacing: 6) {
+                Text(playlists.isLoading(playlist) ? "Refreshing" : "Connected")
+                    .foregroundStyle(playlists.isLoading(playlist) ? Theme.starting : Theme.upcoming)
+                Text("·")
+                Text("Updated recently")
+                Spacer()
+                Menu {
+                    Button(action: refresh) { Label("Refresh", systemImage: "arrow.clockwise") }
+                    Button(action: edit) { Label("Edit", systemImage: "pencil") }
+                    Button(action: makeDefault) { Label("Make Default", systemImage: "checkmark.circle") }
+                    Button(role: .destructive, action: delete) { Label("Delete", systemImage: "trash") }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(Theme.textSecondary)
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+private struct SettingsPage<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ZStack {
+            Theme.background.ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    content
+                }
+                .padding(20)
+            }
+        }
+        .navigationTitle(title)
+    }
+}
+
+private struct SettingsPanel<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 4)
+            VStack(spacing: 0) {
+                content
+            }
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+        }
+    }
+}
+
+private struct SettingsToggleRow: View {
+    let title: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle(isOn: $isOn) {
+            Text(title)
+                .font(.body)
+                .foregroundStyle(Theme.textPrimary)
+        }
+        .tint(Theme.accent)
+        .padding(.horizontal, 14)
+        .frame(minHeight: 48)
+    }
+}
+
+private struct StaticSwitchRow: View {
+    let title: String
+    let isOn: Bool
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(.body)
+                .foregroundStyle(Theme.textPrimary)
+            Spacer()
+            Text(isOn ? "On" : "Off")
+                .font(.subheadline)
+                .foregroundStyle(isOn ? Theme.accent : Theme.textSecondary)
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 48)
+    }
+}
+
+private struct SettingsDisclosureRow: View {
+    let title: String
+    var value: String? = nil
+    var destructive: Bool = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(.body)
+                .foregroundStyle(destructive ? Color.red : Theme.textPrimary)
+            Spacer()
+            if let value {
+                Text(value)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .contentShape(Rectangle())
+        .padding(.horizontal, 14)
+        .frame(minHeight: 48)
+    }
+}
+
+private struct DetailValueRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .foregroundStyle(Theme.textPrimary)
+            Spacer()
+            Text(value)
+                .foregroundStyle(Theme.textSecondary)
+        }
+    }
+}
+
+private struct InfoTextRow: View {
+    let title: String
+
+    init(_ title: String) {
+        self.title = title
+    }
+
+    var body: some View {
+        Text(title)
+            .font(.body)
+            .foregroundStyle(Theme.textPrimary)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .padding(.horizontal, 14)
+    }
+}

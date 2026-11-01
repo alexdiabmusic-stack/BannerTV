@@ -1,0 +1,330 @@
+#if os(tvOS)
+import SwiftUI
+
+struct TVMatchDetailView: View {
+    let match: Match
+    @EnvironmentObject private var playlistStore: PlaylistStore
+    @EnvironmentObject private var prefs: PreferencesStore
+    @EnvironmentObject private var epgRepository: EPGRepository
+    @EnvironmentObject private var streamStore: StreamAvailabilityStore
+    @State private var rankedSources: [RankedSource] = []
+    @State private var playingChannel: Channel?
+    @State private var matchNews: [ESPNArticle] = []
+
+    var body: some View {
+        ZStack {
+            Theme.background.ignoresSafeArea()
+            if match.league.path == "hockey/nhl" {
+                NHLGameCenterView(match: match, watchContent: { streamSourcesShelf }) {
+                    if !matchNews.isEmpty { newsSection }
+                }
+            } else if match.league.path == "baseball/mlb" {
+                MLBGameCenterView(match: match, watchContent: { streamSourcesShelf }) {
+                    if !matchNews.isEmpty { newsSection }
+                }
+            } else if match.league.path == "football/nfl" {
+                NFLGameCenterView(match: match, watchContent: { streamSourcesShelf }) {
+                    if !matchNews.isEmpty { newsSection }
+                }
+            } else if match.league.path == "football/cfl" {
+                CFLGameCenterView(match: match, watchContent: { streamSourcesShelf }) {
+                    if !matchNews.isEmpty { newsSection }
+                }
+            } else if match.league.path == "racing/f1" {
+                F1RaceCentreView(match: match, watchContent: { streamSourcesShelf }) {
+                    if !matchNews.isEmpty { newsSection }
+                }
+            } else if match.league.path == "golf/pga" {
+                GolfTournamentCentreView(match: match, watchContent: { streamSourcesShelf }) {
+                    if !matchNews.isEmpty { newsSection }
+                }
+            } else if match.league.path == "basketball/nba" {
+                BasketballGameCenterView(match: match, config: .nba, providerID: .nba, service: NBAGameCenterService(), cache: .nba,
+                    watchContent: { streamSourcesShelf }) {
+                    if !matchNews.isEmpty { newsSection }
+                }
+            } else if match.league.path == "basketball/wnba" {
+                BasketballGameCenterView(match: match, config: .wnba, providerID: .wnba, service: WNBAGameCenterService(), cache: .wnba,
+                    watchContent: { streamSourcesShelf }) {
+                    if !matchNews.isEmpty { newsSection }
+                }
+            } else if match.league.path == "soccer/eng.1" {
+                SoccerGameCentreView(match: match, leaguePath: "soccer/eng.1", providerID: .epl, providerDisplayName: "Premier League",
+                    service: EPLGameCentreService(), cache: .epl, pollingPolicy: .epl, seed: EPLLegacyMapper.seed(from:),
+                    watchContent: { streamSourcesShelf }) {
+                    if !matchNews.isEmpty { newsSection }
+                }
+            } else if match.league.path == "soccer/usa.1" {
+                SoccerGameCentreView(match: match, leaguePath: "soccer/usa.1", providerID: .mls, providerDisplayName: "MLS",
+                    service: MLSGameCentreService(), cache: .mls, pollingPolicy: .mls, seed: MLSLegacyMapper.seed(from:),
+                    watchContent: { streamSourcesShelf }) {
+                    if !matchNews.isEmpty { newsSection }
+                }
+            } else if match.league.path == "soccer/esp.1" {
+                SoccerGameCentreView(match: match, leaguePath: "soccer/esp.1", providerID: .laliga, providerDisplayName: "La Liga",
+                    service: LaLigaGameCentreService(officialSource: LaLigaProvider.shared), cache: .laliga, pollingPolicy: .laliga, availableTabs: [.overview, .timeline, .lineups, .stats, .commentary, .shots],
+                    seed: LaLigaLegacyMapper.seed(from:),
+                    watchContent: { streamSourcesShelf }) {
+                    if !matchNews.isEmpty { newsSection }
+                }
+            } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 40) {
+                    matchHero
+                    streamSourcesShelf
+                    if !match.broadcasts.isEmpty {
+                        broadcastsSection
+                    }
+                    matchInfoSection
+                    if !matchNews.isEmpty {
+                        newsSection
+                    }
+                }
+                .padding(.horizontal, 48)
+                .padding(.vertical, 48)
+            }
+            }
+        }
+        .navigationTitle(match.shortName)
+        .task(id: "\(match.id)-\(playlistStore.channelsRevision)-\(prefs.preferredStreamLanguages.sorted().joined(separator: ","))-\(epgRepository.programmeRevision)") {
+            await rankSources()
+        }
+        // A launch-time or Following-tab background scan can finish confirming this match's
+        // streams after this view already ran rankSources() from a cold cache.
+        .onChange(of: streamStore.sourcesByMatchId[match.id]) { _, updated in
+            guard let updated, !updated.isEmpty else { return }
+            rankedSources = updated
+        }
+        .task(id: match.id) {
+            matchNews = (try? await SportsRepository.shared.legacyNews(for: match.league, limit: 6)) ?? []
+        }
+        .fullScreenCoverCompat(item: $playingChannel) { channel in
+            TVPlayerView(channel: channel, initialMatch: match)
+        }
+    }
+
+    /// Finds streams for this match through `StreamAvailabilityStore`/`MatchLinkService`
+    /// (the shared `StreamLinker` engine — see MatchLinker/PROMPTS.md).
+    private func rankSources() async {
+        guard match.state != .final else { rankedSources = []; return }
+
+        // Fast path: background scan already ran for this match — display immediately.
+        if let cached = streamStore.sourcesByMatchId[match.id], !cached.isEmpty {
+            rankedSources = cached
+            return
+        }
+
+        await streamStore.scan(matches: [match], channels: playlistStore.allChannels, epgRepository: epgRepository)
+        guard !Task.isCancelled else { return }
+        rankedSources = streamStore.sourcesByMatchId[match.id] ?? []
+    }
+
+    // MARK: - Hero scoreboard
+
+    private var matchHero: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(LinearGradient(
+                    colors: [Theme.surface, Theme.surfaceElevated],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(Theme.hairline)
+                )
+            HStack(spacing: 0) {
+                // Home
+                teamColumn(side: match.home)
+                // Center status
+                VStack(spacing: 14) {
+                    if match.state == .live { TVLiveBadge() }
+                    Text(match.state == .pre ? "VS" : match.statusDetail)
+                        .font(match.state == .pre ? .title.weight(.bold) : .headline.weight(.bold))
+                        .foregroundStyle(match.state == .pre ? Theme.textSecondary : Theme.textPrimary)
+                        .multilineTextAlignment(.center)
+                    Text(match.league.shortName.uppercased())
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Theme.textSecondary)
+                        .tracking(1.5)
+                }
+                .frame(maxWidth: 180)
+                // Away
+                teamColumn(side: match.away)
+            }
+            .padding(.vertical, 40)
+        }
+    }
+
+    private func teamColumn(side: TeamSide) -> some View {
+        VStack(spacing: 12) {
+            TVTeamLogo(url: side.logoURL, size: 90)
+            Text(side.abbreviation)
+                .font(.title2.weight(.bold))
+                .foregroundStyle(Theme.textPrimary)
+            if let score = side.score {
+                Text(score)
+                    .font(.system(size: 56, weight: .bold, design: .rounded))
+                    .foregroundStyle(side.isWinner ? Theme.accent : Theme.textPrimary)
+                    .monospacedDigit()
+            }
+            if let record = side.record {
+                Text(record)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Stream sources
+
+    @ViewBuilder private var streamSourcesShelf: some View {
+        if !rankedSources.isEmpty {
+            TVShelfRow(title: "Stream Sources", systemImage: "play.tv.fill") {
+                ForEach(rankedSources) { source in
+                    TVSourceTile(channel: source.channel, score: source.score,
+                                 subtitle: source.epgProgramme?.title,
+                                 evidenceCategories: source.evidenceCategories) {
+                        playingChannel = source.channel
+                    }
+                }
+            }
+        } else if !playlistStore.playlists.isEmpty {
+            noSourcesNote
+        }
+    }
+
+    // MARK: - No sources note
+
+    private var noSourcesNote: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "magnifyingglass")
+                .font(.title3)
+                .foregroundStyle(Theme.textSecondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("No matching streams found")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(noStreamReason)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .padding(20)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).strokeBorder(Theme.hairline))
+    }
+
+    /// Most guide ids in a real Xtream playlist only reach 12-72h ahead (see MatchLinker/
+    /// README.md) — a match further out than that hasn't necessarily been snubbed by the
+    /// provider's guide, it just hasn't been published yet.
+    private var noStreamReason: String {
+        match.date.timeIntervalSinceNow > 48 * 3600
+            ? "Listings appear closer to kickoff"
+            : "No listing in your playlist's guide"
+    }
+
+    // MARK: - Broadcasts
+
+    private var broadcastsSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Broadcasts", systemImage: "antenna.radiowaves.left.and.right")
+                .font(.title3.weight(.bold))
+                .foregroundStyle(Theme.textPrimary)
+            HStack(spacing: 10) {
+                ForEach(match.broadcasts, id: \.self) { network in
+                    Text(network)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .padding(.horizontal, 16).padding(.vertical, 9)
+                        .background(Theme.surface, in: Capsule())
+                        .overlay(Capsule().strokeBorder(Theme.hairline))
+                }
+            }
+        }
+    }
+
+    // MARK: - Match info
+
+    private var matchInfoSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Match Info", systemImage: "info.circle.fill")
+                .font(.title3.weight(.bold))
+                .foregroundStyle(Theme.textPrimary)
+            VStack(spacing: 0) {
+                infoRow(label: "League", value: match.league.name)
+                Divider().background(Theme.hairline)
+                infoRow(label: "Status", value: match.statusDetail)
+                if let venue = match.venue {
+                    Divider().background(Theme.hairline)
+                    infoRow(label: "Venue", value: venue)
+                }
+            }
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).strokeBorder(Theme.hairline))
+        }
+    }
+
+    private func infoRow(label: String, value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.textSecondary)
+            Spacer()
+            Text(value)
+                .font(.subheadline)
+                .foregroundStyle(Theme.textPrimary)
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 16)
+    }
+
+    // MARK: - News
+
+    private var newsSection: some View {
+        TVShelfRow(title: "Related News", systemImage: "newspaper.fill") {
+            ForEach(matchNews) { article in
+                TVNewsCard(article: article)
+            }
+        }
+    }
+}
+
+private struct TVNewsCard: View {
+    let article: ESPNArticle
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            CachedImage(url: article.imageURL) { phase in
+                if case .success(let image) = phase {
+                    image.resizable().scaledToFill()
+                } else {
+                    Image(systemName: "newspaper.fill")
+                        .font(.title)
+                        .foregroundStyle(Theme.accent)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .frame(width: 280, height: 158)
+            .background(Theme.surfaceElevated)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(article.headline)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                if let published = article.published {
+                    Text(published, style: .relative)
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+        }
+        .frame(width: 280)
+    }
+}
+#endif

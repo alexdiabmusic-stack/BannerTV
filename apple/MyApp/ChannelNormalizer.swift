@@ -1,0 +1,222 @@
+import Foundation
+
+/// Normalizes messy IPTV channel names using rules from curated_tv_guide_filter.json
+/// plus hardcoded patterns for common provider decoration (★, ◉, CAF prefix, etc.).
+nonisolated final class ChannelNormalizer {
+
+    private var compiledPrefixPatterns: [NSRegularExpression] = []
+    private var compiledQualityPatterns: [NSRegularExpression] = []
+    private var compiledSourcePatterns: [NSRegularExpression] = []
+    private var compiledHidePatterns: [NSRegularExpression] = []
+    private var compiledVodPatterns: [NSRegularExpression] = []
+
+    // Hardcoded provider decoration patterns applied before JSON-defined rules
+    // These handle real-world provider naming conventions (★, ◉, CAF prefix, etc.)
+    private static let providerCountryPrefixRe = try! NSRegularExpression(
+        // "CAF ★ ", "CA ★ ", "US ★ ", "DE ★ ", "UK ★ " etc.
+        pattern: #"^\s*(?:\[)?(CAF|CANADA|UNITED STATES|USA|CA|US|UK|GB|AU|FR|DE|BE|NL|ES|IT|PT|TR|PL|IN|AR|BR|MX|ZA|NZ|IE|CH|AT|SE|NO|DK|FI|GR|RU|JP|KR|CN|INTL)(?:\])?\s*(?:[★\*⭐:|\-]\s*|(?<=\])\s*)"#,
+        options: .caseInsensitive)
+
+    private static let decorativeCharRe = try! NSRegularExpression(
+        // ★ ◉ ⭐ ● ◆ ▶ etc.
+        pattern: "[★◉⭐●◆▶►◀◄◈◇⊕⊗⊘☆✦✧]", options: [])
+
+    private static let bracketTagRe = try! NSRegularExpression(
+        // Strip only known technical/language tags. [EAST], [TSN 2], and event IDs are identity.
+        pattern: #"\[(?:BK|BACKUP|BCKP|HD|SD|FHD|UHD|4K|HEVC|H[.]?26[45]|ENG|ESP|FRA|GER|ITA|POR|ARA|TUR|POL|NLD|ZHO|JPN|KOR|HIN|RUS)\]"#,
+        options: .caseInsensitive)
+
+    // Patterns for pre-normalization metadata extraction
+    // Slot: "PEACOCK 01: " / "TSN+ 7: " / "APPLE TV+ SERIES 8 HD" / "STAN EVENT 4"
+    private static let slotWithColonRe = try! NSRegularExpression(
+        pattern: #"\b(\d{1,4})\s*:(?:\s|$)"#, options: .caseInsensitive)
+    private static let namedSlotRe = try! NSRegularExpression(
+        pattern: #"(?:SERIE[S]?|EVENT)\s+(\d{1,4})(?:\s|$)"#, options: .caseInsensitive)
+    // Event date: YYYY-MM-DD or standalone 4-digit year
+    private static let isoDateRe = try! NSRegularExpression(
+        pattern: #"\b(20\d{2}-\d{2}-\d{2})\b"#, options: [])
+    private static let yearOnlyRe = try! NSRegularExpression(
+        pattern: #"\b(20\d{2})\b"#, options: [])
+    // Backup marker
+    private static let backupRe = try! NSRegularExpression(
+        pattern: #"\[(BACKUP|BK)\]"#, options: .caseInsensitive)
+    // Language tag in brackets: [ESP], [FRA], [GER] etc.
+    private static let languageTagRe = try! NSRegularExpression(
+        pattern: #"\[(ESP|FRA|GER|ITA|POR|ARA|TUR|POL|NLD|ZHO|JPN|KOR|HIN|RUS|ENG)\]"#,
+        options: .caseInsensitive)
+
+    private static let longBracketSuffixRe = try! NSRegularExpression(
+        // [Hockey:2025 Battlefords North Stars...] event descriptions
+        pattern: #"\[.{15,}\]\s*$"#, options: [])
+
+    private static let trailingColonRe = try! NSRegularExpression(
+        pattern: #"\s*:\s*$"#, options: [])
+
+    private static let decoratedQualityRe = try! NSRegularExpression(
+        pattern: #"\b(?:FHD|UHD|HD|SD|4K)[⁰¹²³⁴⁵⁶⁷⁸⁹]+"#, options: .caseInsensitive)
+
+    init(config: CuratedGuideConfig) {
+        let opts: NSRegularExpression.Options = [.caseInsensitive]
+        compiledPrefixPatterns  = compile(config.normalization.stripPrefixRegex, options: opts)
+        compiledQualityPatterns = compile(config.normalization.stripQualityTokensRegex, options: opts)
+        compiledSourcePatterns  = compile(config.normalization.stripSourceTokensRegex, options: opts)
+        compiledHidePatterns    = compile(config.filterRules.alwaysHideNamePatterns, options: opts)
+        compiledVodPatterns     = compile(config.filterRules.vodLikeNamePatterns, options: opts)
+    }
+
+    private func compile(_ patterns: [String], options: NSRegularExpression.Options) -> [NSRegularExpression] {
+        patterns.compactMap {
+            let pattern = $0.replacingOccurrences(of: "\\\\", with: "\\")
+            return try? NSRegularExpression(pattern: pattern, options: options)
+        }
+    }
+
+    // MARK: - Normalization
+
+    /// Returns a clean, normalized channel name suitable for matching.
+    nonisolated func normalize(_ name: String) -> String {
+        var result = strip(Self.decoratedQualityRe, from: name)
+            .folding(options: [.diacriticInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+
+        // Phase 1: Strip provider decoration (order matters)
+        result = strip(Self.longBracketSuffixRe, from: result)      // [Hockey:2025...] event suffixes
+        result = strip(Self.providerCountryPrefixRe, from: result)   // "CAF ★ ", "US ★ "
+        result = strip(Self.bracketTagRe, from: result)              // [BK], [FHD] etc.
+        result = strip(Self.decorativeCharRe, from: result)          // remaining ★ ◉ etc.
+        result = strip(Self.trailingColonRe, from: result)           // trailing " :"
+
+        // Phase 2: JSON-defined rules
+        for pattern in compiledPrefixPatterns {
+            result = apply(pattern, to: result, replacement: "")
+        }
+        for pattern in compiledQualityPatterns {
+            result = apply(pattern, to: result, replacement: " ")
+        }
+        for pattern in compiledSourcePatterns {
+            result = apply(pattern, to: result, replacement: " ")
+        }
+
+        // Phase 3: Clean up whitespace and punctuation
+        // Plus and all feed/channel numbers are identity-bearing (ESPN+ != ESPN,
+        // Sportsnet 360 != Sportsnet, ESPN+ 449 != ESPN+). Preserve them for matching.
+        result = String(result.map { $0.isLetter || $0.isNumber || $0 == "+" ? $0 : " " })
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return result
+    }
+
+    // MARK: - Country hint extraction
+
+    /// Detects country/region hint from provider prefix patterns like "CAF ★", "CA ★", "US ★".
+    nonisolated func extractCountryHint(from name: String) -> String? {
+        // Map provider prefixes to ISO country codes
+        let prefixMap = ["CAF": "CA", "CANADA": "CA", "USA": "US", "UNITED STATES": "US", "UK": "GB"]
+        let nsName = name as NSString
+        let range = NSRange(location: 0, length: nsName.length)
+        if let match = Self.providerCountryPrefixRe.firstMatch(in: name, range: range) {
+            let prefix = nsName.substring(with: match.range(at: 1)).uppercased()
+            return prefixMap[prefix] ?? prefix
+        }
+        return nil
+    }
+
+    // MARK: - Pre-normalization metadata extraction
+
+    /// Extracts raw slot labels, dates, backup flags and event descriptions before display cleanup.
+    /// Feed numbers also remain in the normalized identity; they never collapse to a base network.
+    nonisolated func extractStreamMetadata(from name: String) -> StreamMetadata {
+        let nsName = name as NSString
+        let range = NSRange(location: 0, length: nsName.length)
+
+        // Slot number: trailing "NN:" pattern or SERIES/EVENT NN
+        var slotNumber: Int? = nil
+        var slotLabel: String? = nil
+        if let m = Self.slotWithColonRe.firstMatch(in: name, range: range),
+           m.numberOfRanges > 1, m.range(at: 1).location != NSNotFound {
+            let digits = nsName.substring(with: m.range(at: 1))
+            slotNumber = Int(digits)
+            // Label = everything before the colon, stripped of decoration
+            let end = m.range(at: 1).location + m.range(at: 1).length
+            slotLabel = nsName.substring(to: end).trimmingCharacters(in: .whitespaces)
+        } else if let m = Self.namedSlotRe.firstMatch(in: name, range: range),
+                  m.numberOfRanges > 1, m.range(at: 1).location != NSNotFound {
+            let digits = nsName.substring(with: m.range(at: 1))
+            slotNumber = Int(digits)
+            slotLabel = nsName.substring(with: m.range).trimmingCharacters(in: .whitespaces)
+        }
+
+        // Event date: ISO date preferred over year-only
+        var eventDate: String? = nil
+        if let m = Self.isoDateRe.firstMatch(in: name, range: range),
+           m.numberOfRanges > 1, m.range(at: 1).location != NSNotFound {
+            eventDate = nsName.substring(with: m.range(at: 1))
+        } else if let m = Self.yearOnlyRe.firstMatch(in: name, range: range),
+                  m.numberOfRanges > 1, m.range(at: 1).location != NSNotFound {
+            eventDate = nsName.substring(with: m.range(at: 1))
+        }
+
+        // Backup marker
+        let isBackup = Self.backupRe.firstMatch(in: name, range: range) != nil
+
+        // Language hint from bracket tag
+        var languageHint: String? = nil
+        if let m = Self.languageTagRe.firstMatch(in: name, range: range) {
+            languageHint = nsName.substring(with: m.range).uppercased()
+                .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        }
+
+        // Event description from long bracket suffix (captured before longBracketSuffixRe strips it)
+        var eventDescription: String? = nil
+        if let m = Self.longBracketSuffixRe.firstMatch(in: name, range: range) {
+            let bracket = nsName.substring(with: m.range).trimmingCharacters(in: .whitespaces)
+            // Strip outer brackets to get the description text
+            if bracket.hasPrefix("[") && bracket.hasSuffix("]") {
+                eventDescription = String(bracket.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+            }
+        }
+
+        return StreamMetadata(
+            slotNumber: slotNumber,
+            slotLabel: slotLabel,
+            eventDate: eventDate,
+            isBackup: isBackup,
+            languageHint: languageHint,
+            eventDescription: eventDescription
+        )
+    }
+
+    // MARK: - Hide check
+
+    /// Returns true if the channel NAME should be hidden. Never applied to programme content.
+    nonisolated func shouldHide(channelName: String) -> Bool {
+        let range = NSRange(channelName.startIndex..., in: channelName)
+        for pattern in compiledHidePatterns {
+            if pattern.firstMatch(in: channelName, range: range) != nil { return true }
+        }
+        for pattern in compiledVodPatterns {
+            if pattern.firstMatch(in: channelName, range: range) != nil { return true }
+        }
+        return false
+    }
+
+    // MARK: - Helpers
+
+    private func strip(_ regex: NSRegularExpression, from string: String) -> String {
+        apply(regex, to: string, replacement: "")
+    }
+
+    private func apply(_ regex: NSRegularExpression, to string: String, replacement: String) -> String {
+        regex.stringByReplacingMatches(
+            in: string,
+            range: NSRange(string.startIndex..., in: string),
+            withTemplate: replacement
+        )
+    }
+}
+
+/// Every compiled pattern is assigned once in `init` and never mutated, so one normalizer can
+/// be shared with background tasks.
+extension ChannelNormalizer: @unchecked Sendable {}

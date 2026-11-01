@@ -1,0 +1,990 @@
+import SwiftUI
+
+struct BannerFantasyHubView: View {
+    @EnvironmentObject private var nativeStore: BannerFantasyStore
+    let importedContent: AnyView?
+    let onCreateLeague: () -> Void
+    let onJoinLeague: () -> Void
+    let onConnectESPN: () -> Void
+    let onConnectSleeper: () -> Void
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 22) {
+                hero
+                // Native Banner-league create/join is parked for now — ESPN/Sleeper import is
+                // the only path surfaced here until that integration is fully built out.
+                if let importedContent, nativeStore.leagues.isEmpty {
+                    importedSection(importedContent)
+                } else {
+                    importSection
+                }
+                myLeagues
+                Spacer(minLength: 80)
+            }
+            .padding(20)
+            .bannerReadableWidth(820)
+            .frame(maxWidth: .infinity)
+        }
+        .task { await nativeStore.load() }
+    }
+
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Fantasy", systemImage: "trophy.fill")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Theme.accent)
+            Text("Build your team. Compete with friends. Watch your players live in Banner.")
+                .font(.title2.weight(.bold))
+                .foregroundStyle(Theme.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).strokeBorder(Theme.hairline))
+    }
+
+    private var actions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("OR START A BANNER LEAGUE")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Theme.textSecondary)
+            Button(action: onCreateLeague) {
+                Label("Create Fantasy Team", systemImage: "plus.circle.fill")
+                    .font(.headline.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.accent)
+
+            Button(action: onJoinLeague) {
+                Label("Join a League", systemImage: "person.2.badge.plus")
+                    .font(.headline.weight(.bold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+            }
+            .buttonStyle(.bordered)
+            .tint(Theme.accent)
+        }
+    }
+
+    @ViewBuilder
+    private var myLeagues: some View {
+        // No create/join entry point is shown right now, so skip this section entirely
+        // when there's nothing to display — an empty "no leagues yet" card with no way
+        // to act on it would just be a dead end.
+        if !nativeStore.leagues.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("MY LEAGUES")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Theme.textSecondary)
+                VStack(spacing: 0) {
+                    ForEach(nativeStore.leagues, id: \.league.id) { bundle in
+                        Button { nativeStore.selectLeague(id: bundle.league.id) } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: bundle.league.phase == .lobby ? "clock.badge" : "trophy.fill")
+                                    .foregroundStyle(Theme.accent)
+                                    .frame(width: 26)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(bundle.league.name)
+                                        .font(.subheadline.weight(.bold))
+                                        .foregroundStyle(Theme.textPrimary)
+                                        .lineLimit(2)
+                                    Text("\(bundle.league.sport.displayName) · \(bundle.league.source.displayName) · \(bundle.teams.count)/\(bundle.league.maxTeams) teams · \(bundle.league.phase.rawValue.capitalized)")
+                                        .font(.caption)
+                                        .foregroundStyle(Theme.textSecondary)
+                                }
+                                Spacer()
+                                if nativeStore.selectedLeagueID == bundle.league.id {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(Theme.accent)
+                                }
+                            }
+                            .padding(14)
+                        }
+                        .buttonStyle(.plain)
+                        if bundle.league.id != nativeStore.leagues.last?.league.id { Divider().overlay(Theme.hairline) }
+                    }
+                }
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+            }
+        }
+    }
+
+    private func importedSection(_ importedContent: AnyView) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("IMPORTED LEAGUE")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Theme.textSecondary)
+            importedContent
+        }
+    }
+
+    private var importSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("CONNECT YOUR LEAGUE")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Theme.textSecondary)
+            if AppConfiguration.isESPNFantasyProviderEnabled {
+                Button(action: onConnectESPN) {
+                    Label("Connect ESPN Fantasy", systemImage: "link")
+                        .font(.headline.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.accent)
+                Text("Football, Hockey, Basketball or Baseball — public or private leagues.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            if AppConfiguration.isSleeperFantasyProviderEnabled {
+                Button(action: onConnectSleeper) {
+                    Label("Connect Sleeper", systemImage: "link")
+                        .font(.headline.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.bordered)
+                .tint(Theme.accent)
+                .padding(.top, AppConfiguration.isESPNFantasyProviderEnabled ? 4 : 0)
+            }
+        }
+    }
+}
+
+struct BannerFantasyNativeDashboardView: View {
+    @EnvironmentObject private var nativeStore: BannerFantasyStore
+    @State private var showingDraft = false
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 18) {
+                leagueSelector
+                if let bundle = nativeStore.selectedBundle {
+                    leagueSummary(bundle)
+                    if bundle.league.phase == .lobby { lobby(bundle) }
+                    livePlayers
+                    todayPlayers
+                    if bundle.league.effectiveMode == .simulatedLeague { matchupPlaceholder(bundle) }
+                    roster(bundle)
+                    if bundle.league.effectiveMode == .simulatedLeague { standings(bundle) }
+                    activity(bundle)
+                } else {
+                    BannerFantasyInfoCard(systemImage: "trophy", title: "No active league", subtitle: "Create or join a Banner Fantasy league to get started.")
+                }
+                Spacer(minLength: 80)
+            }
+            .padding(20)
+            .bannerReadableWidth(820)
+            .frame(maxWidth: .infinity)
+        }
+        .task { await nativeStore.load() }
+        .sheet(isPresented: $showingDraft) { BannerFantasyDraftRoomView().environmentObject(nativeStore) }
+    }
+
+    @ViewBuilder
+    private var leagueSelector: some View {
+        if nativeStore.leagues.count > 1 {
+            Menu {
+                ForEach(nativeStore.leagues, id: \.league.id) { bundle in
+                    Button(bundle.league.name) { nativeStore.selectLeague(id: bundle.league.id) }
+                }
+            } label: {
+                BannerFantasyDisclosureRow(title: nativeStore.selectedBundle?.league.name ?? "Select League", subtitle: nativeStore.selectedBundle.map { "Banner Fantasy · \($0.league.sport.displayName)" } ?? "Banner Fantasy")
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func leagueSummary(_ bundle: BannerFantasyLeagueBundle) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(bundle.league.name)
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(Theme.textPrimary)
+                    Text("\(bundle.league.sport.displayName) · \(bundle.league.source.displayName) · \(bundle.league.scoringRules.type.displayName)")
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Spacer()
+                Text(bundle.league.phase.rawValue.uppercased())
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Theme.surfaceElevated, in: Capsule())
+            }
+            if let team = nativeStore.selectedTeam {
+                Text(team.displayName)
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(Theme.textPrimary)
+            }
+        }
+        .padding(16)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).strokeBorder(Theme.hairline))
+    }
+
+    private func lobby(_ bundle: BannerFantasyLeagueBundle) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("LEAGUE LOBBY")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Theme.textSecondary)
+            HStack {
+                Text("\(bundle.teams.count) / \(bundle.league.maxTeams) teams joined")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(Theme.textPrimary)
+                Spacer()
+                Text(bundle.league.inviteCode)
+                    .font(.caption.weight(.bold).monospaced())
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Theme.surfaceElevated, in: Capsule())
+            }
+            if let draftDate = bundle.league.draftSettings.scheduledAt {
+                Label(draftDate.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            Button { showingDraft = true } label: {
+                Label("Open Draft Room", systemImage: "rectangle.grid.2x2")
+                    .font(.subheadline.weight(.bold))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.accent)
+        }
+        .padding(14)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+    }
+
+    @ViewBuilder
+    private var livePlayers: some View {
+        let contexts = nativeStore.liveEventContexts
+        if !contexts.isEmpty {
+            fantasyEventSection(title: "MY PLAYERS LIVE", systemImage: "dot.radiowaves.left.and.right", contexts: contexts)
+        }
+    }
+
+    @ViewBuilder
+    private var todayPlayers: some View {
+        let contexts = nativeStore.todayEventContexts.filter { !$0.isLive }
+        if !contexts.isEmpty {
+            fantasyEventSection(title: "TODAY", systemImage: "calendar", contexts: contexts)
+        }
+    }
+
+    private func fantasyEventSection(title: String, systemImage: String, contexts: [FantasyEventContext]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(title, systemImage: systemImage)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(title.contains("LIVE") ? Theme.live : Theme.textSecondary)
+            VStack(spacing: 0) {
+                ForEach(contexts) { context in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(context.event.shortName)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(Theme.textPrimary)
+                                .lineLimit(2)
+                            Spacer()
+                            Text(eventStatusText(context.event))
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(context.isLive ? Theme.live : Theme.textSecondary)
+                        }
+                        Text(context.playerGames.map { $0.fantasyPlayer.fullName }.prefix(3).joined(separator: " · "))
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(2)
+                        HStack(spacing: 8) {
+                            Text("\(context.playerGames.count) players")
+                            if context.matchedChannel != nil { Text("Watch available") }
+                        }
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(Theme.accent)
+                    }
+                    .padding(12)
+                    if context.id != contexts.last?.id { Divider().overlay(Theme.hairline) }
+                }
+            }
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+        }
+    }
+
+    private func eventStatusText(_ match: Match) -> String {
+        switch match.state {
+        case .live: return "LIVE"
+        case .final: return "FINAL"
+        case .pre: return match.date.formatted(date: .omitted, time: .shortened)
+        }
+    }
+
+    private func matchupPlaceholder(_ bundle: BannerFantasyLeagueBundle) -> some View {
+        BannerFantasyInfoCard(systemImage: "chart.xyaxis.line", title: "Matchups ready after draft", subtitle: "Native scoring uses Banner sports stats through the FantasyScoringEngine. Projections are not fabricated.")
+    }
+
+    private func roster(_ bundle: BannerFantasyLeagueBundle) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("MY TEAM")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Theme.textSecondary)
+            let entries = nativeStore.selectedRoster?.entries ?? []
+            if entries.isEmpty {
+                BannerFantasyInfoCard(systemImage: "person.crop.rectangle.stack", title: "Roster empty", subtitle: "Draft NHL players to build your team.")
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(entries) { entry in
+                        HStack(spacing: 10) {
+                            Text(entry.primaryPosition ?? "--")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(Theme.accent)
+                                .frame(width: 42, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.playerName)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Theme.textPrimary)
+                                    .lineLimit(1)
+                                Text([entry.nhlTeamAbbreviation, entry.eligibleSlots.map(\.displayAbbreviation).joined(separator: "/")].compactMap { $0 }.joined(separator: " · "))
+                                    .font(.caption)
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                            Spacer()
+                            if let injury = entry.injuryStatus {
+                                Text(injury.uppercased())
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(Theme.starting)
+                            }
+                            Menu {
+                                ForEach(entry.eligibleSlots + [.bench], id: \.self) { slot in
+                                    Button(slot.displayName) {
+                                        Task { await nativeStore.moveLineup(playerEntryID: entry.id, to: slot) }
+                                    }
+                                }
+                                Button("Drop Player", role: .destructive) {
+                                    Task { await nativeStore.drop(playerEntryID: entry.id) }
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis.circle")
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                            .accessibilityLabel("Manage \(entry.playerName)")
+                        }
+                        .padding(12)
+                        if entry.id != entries.last?.id { Divider().overlay(Theme.hairline) }
+                    }
+                }
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+            }
+        }
+    }
+
+    private func standings(_ bundle: BannerFantasyLeagueBundle) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("STANDINGS")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Theme.textSecondary)
+            VStack(spacing: 0) {
+                ForEach(bundle.standings.sorted { $0.rank < $1.rank }) { standing in
+                    let team = bundle.teams.first { $0.id == standing.teamID }
+                    HStack(spacing: 10) {
+                        Text("\(standing.rank)")
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Theme.textSecondary)
+                            .frame(width: 24)
+                        Text(team?.displayName ?? "Team")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        Spacer()
+                        Text("\(standing.wins)-\(standing.losses)-\(standing.ties)")
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .padding(12)
+                }
+            }
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+        }
+    }
+
+    private func activity(_ bundle: BannerFantasyLeagueBundle) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("ACTIVITY")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Theme.textSecondary)
+            if bundle.transactions.isEmpty {
+                BannerFantasyInfoCard(systemImage: "list.bullet.rectangle", title: "No activity yet", subtitle: "Draft picks, adds, drops, waivers and trades will appear here.")
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(bundle.transactions.prefix(8)) { transaction in
+                        Text(transaction.description)
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.textPrimary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                    }
+                }
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+            }
+        }
+    }
+}
+
+struct BannerFantasyCreateLeagueFlow: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var nativeStore: BannerFantasyStore
+    @State private var selectedSport: FantasySport = .nhl
+    @State private var selectedMode: BannerFantasyMode = .personalTeam
+    @State private var leagueName = ""
+    @State private var teamName = ""
+    @State private var maxTeams = 10
+    @State private var visibility: BannerFantasyVisibility = .private
+    @State private var scoringType: BannerFantasyScoringType = .headToHeadPoints
+    @State private var rosterConfiguration = BannerFantasyRosterConfiguration.standard
+    @State private var draftDate = Date().addingTimeInterval(7 * 24 * 3600)
+    @State private var pickTimer = 90
+    @State private var waiverType: BannerFantasyWaiverSettings.WaiverType = .rollingPriority
+    @State private var playoffTeams = 4
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.background.ignoresSafeArea()
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("BANNER FANTASY", systemImage: selectedSport.symbolName)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(Theme.accent)
+                            Text(selectedMode == .personalTeam ? "Create your fantasy team" : "Create a simulated league")
+                                .font(.title2.weight(.bold))
+                                .foregroundStyle(Theme.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Choose a sport, draft real ESPN-backed players, then track points and games inside Banner.")
+                                .font(.subheadline)
+                                .foregroundStyle(Theme.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(18)
+                        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).strokeBorder(Theme.hairline))
+
+                        setupCard(title: "Fantasy Type", systemImage: "switch.2") {
+                            Picker("Mode", selection: $selectedMode) {
+                                ForEach(BannerFantasyMode.allCases) { mode in
+                                    Text(mode.displayName).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            Text(selectedMode == .personalTeam ? "One local roster for live scoring, season totals and Watch links." : "Local CPU opponents, generated schedules, standings and draft order.")
+                                .font(.footnote)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+
+                        setupCard(title: "Sport & Identity", systemImage: selectedSport.symbolName) {
+                            Picker("Sport", selection: $selectedSport) {
+                                ForEach(FantasySport.allCases) { sport in
+                                    Label(sport.longDisplayName, systemImage: sport.symbolName).tag(sport)
+                                }
+                            }
+                            .onChange(of: selectedSport) { _, newSport in rosterConfiguration = .standard(for: newSport) }
+                            TextField(selectedMode == .personalTeam ? "Team name" : "League name", text: $leagueName)
+                                #if !os(tvOS)
+                                .textFieldStyle(.roundedBorder)
+                                #endif
+                            TextField("Your team name", text: $teamName)
+                                #if !os(tvOS)
+                                .textFieldStyle(.roundedBorder)
+                                #endif
+                            if selectedMode == .simulatedLeague {
+                                FantasyPlatformStepper("\(maxTeams) teams", value: $maxTeams, in: 4...20, step: 2)
+                                Picker("Visibility", selection: $visibility) {
+                                    ForEach(BannerFantasyVisibility.allCases) { Text($0.displayName).tag($0) }
+                                }
+                            }
+                        }
+
+                        setupCard(title: "Scoring", systemImage: "chart.bar.fill") {
+                            Picker("Scoring", selection: $scoringType) {
+                                ForEach(BannerFantasyScoringType.allCases) { Text($0.displayName).tag($0) }
+                            }
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 86), spacing: 8)], spacing: 8) {
+                                ForEach(BannerFantasyScoringRules.bannerDefault(sport: selectedSport, type: scoringType).rules.prefix(12)) { rule in
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(rule.stat.abbreviation)
+                                            .font(.caption2.weight(.bold))
+                                            .foregroundStyle(Theme.textSecondary)
+                                        Text(rule.points.formatted(.number.precision(.fractionLength(1))))
+                                            .font(.headline.weight(.bold).monospacedDigit())
+                                            .foregroundStyle(Theme.textPrimary)
+                                    }
+                                    .padding(9)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Theme.surfaceElevated, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                                }
+                            }
+                        }
+
+                        setupCard(title: "Roster", systemImage: "person.3.fill") {
+                            ForEach(FantasySportConfiguration.configuration(for: selectedSport).eligiblePositions) { slot in
+                                FantasyPlatformStepper("\(slot.displayAbbreviation)  \(rosterConfiguration.slotCounts[slot] ?? 0)", value: Binding(
+                                    get: { rosterConfiguration.slotCounts[slot] ?? 0 },
+                                    set: { rosterConfiguration.slotCounts[slot] = $0 }
+                                ), in: 0...10)
+                            }
+                        }
+
+                        setupCard(title: "Draft", systemImage: "rectangle.grid.2x2") {
+                            #if os(tvOS)
+                            Text(draftDate.formatted(date: .abbreviated, time: .shortened))
+                            HStack {
+                                Button("Previous day") { draftDate.addTimeInterval(-86400) }
+                                Button("Next day") { draftDate.addTimeInterval(86400) }
+                                Button("15 minutes earlier") { draftDate.addTimeInterval(-900) }
+                                Button("15 minutes later") { draftDate.addTimeInterval(900) }
+                            }
+                            #else
+                            DatePicker("Draft time", selection: $draftDate)
+                            #endif
+                            FantasyPlatformStepper("\(pickTimer) second pick timer", value: $pickTimer, in: 30...300, step: 15)
+                        }
+
+                        if selectedMode == .simulatedLeague {
+                            setupCard(title: "League Rules", systemImage: "slider.horizontal.3") {
+                                Picker("Waivers", selection: $waiverType) {
+                                    ForEach(BannerFantasyWaiverSettings.WaiverType.allCases) { Text($0.rawValue.capitalized).tag($0) }
+                                }
+                                FantasyPlatformStepper("\(playoffTeams) playoff teams", value: $playoffTeams, in: 2...12, step: 2)
+                            }
+                        }
+
+                        Button {
+                            Task {
+                                await nativeStore.createLeague(createRequest)
+                                if nativeStore.lastError == nil { dismiss() }
+                            }
+                        } label: {
+                            Label(selectedMode == .personalTeam ? "Create Fantasy Team" : "Create League", systemImage: "checkmark.circle.fill")
+                                .font(.headline.weight(.bold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.accent)
+                        .disabled(leagueName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || teamName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        if let error = nativeStore.lastError {
+                            BannerFantasyInfoCard(systemImage: "exclamationmark.triangle", title: "Could not create Fantasy", subtitle: error)
+                        }
+                    }
+                    .padding(20)
+                }
+            }
+            .navigationTitle("Create Fantasy")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+    }
+
+    private func setupCard<Content: View>(title: String, systemImage: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(title.uppercased(), systemImage: systemImage)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Theme.textSecondary)
+            content()
+        }
+        .padding(16)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).strokeBorder(Theme.hairline))
+    }
+
+    private var createRequest: BannerFantasyCreateLeagueRequest {
+        BannerFantasyCreateLeagueRequest(
+            sport: selectedSport,
+            mode: selectedMode,
+            leagueName: leagueName.trimmingCharacters(in: .whitespacesAndNewlines),
+            teamName: teamName.trimmingCharacters(in: .whitespacesAndNewlines),
+            maxTeams: selectedMode == .personalTeam ? 1 : maxTeams,
+            visibility: visibility,
+            scoringType: scoringType,
+            rosterConfiguration: rosterConfiguration,
+            scoringRules: .bannerDefault(sport: selectedSport, type: scoringType),
+            draftSettings: BannerFantasyDraftSettings(type: .snake, scheduledAt: draftDate, pickTimerSeconds: pickTimer, draftOrderTeamIDs: []),
+            waiverSettings: BannerFantasyWaiverSettings(type: waiverType, waiverPeriodHours: 24, usesFAAB: waiverType == .faab, faabBudget: waiverType == .faab ? 100 : nil),
+            tradeSettings: BannerFantasyTradeSettings(deadline: nil, reviewType: .commissioner),
+            playoffSettings: BannerFantasyPlayoffSettings(regularSeasonPeriods: 20, playoffTeams: playoffTeams, playoffRounds: max(1, Int(log2(Double(playoffTeams)))), championshipPeriod: nil)
+        )
+    }
+}
+
+struct BannerFantasyJoinLeagueSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var nativeStore: BannerFantasyStore
+    @State private var inviteCode = ""
+    @State private var teamName = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Invite") {
+                    TextField("Invite code", text: $inviteCode)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.characters)
+                        #endif
+                    TextField("Your team name", text: $teamName)
+                }
+                Section {
+                    Button {
+                        Task {
+                            await nativeStore.joinLeague(BannerFantasyJoinLeagueRequest(inviteCode: inviteCode.trimmingCharacters(in: .whitespacesAndNewlines), teamName: teamName.trimmingCharacters(in: .whitespacesAndNewlines)))
+                            if nativeStore.lastError == nil { dismiss() }
+                        }
+                    } label: {
+                        Label("Join League", systemImage: "person.2.badge.plus")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(inviteCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || teamName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if let error = nativeStore.lastError {
+                    Section { Text(error).foregroundStyle(Theme.starting) }
+                }
+            }
+            .navigationTitle("Join League")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+    }
+}
+
+struct BannerFantasyDraftRoomView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var nativeStore: BannerFantasyStore
+    @State private var query = ""
+    @State private var positionFilter: String = "All"
+    @State private var teamFilter: String = "All"
+    @State private var minimumPoints = 0.0
+    @State private var selectedPlayer: BannerFantasyAvailablePlayer?
+
+    private var positions: [String] {
+        ["All"] + Array(Set(nativeStore.availablePlayers.compactMap(\.position))).sorted()
+    }
+
+    private var teams: [String] {
+        ["All"] + Array(Set(nativeStore.availablePlayers.compactMap(\.teamAbbreviation))).sorted()
+    }
+
+    private var filteredPlayers: [BannerFantasyAvailablePlayer] {
+        let rostered = Set(nativeStore.selectedBundle?.rosters.flatMap(\.entries).map(\.canonicalPlayerID) ?? [])
+        let available = nativeStore.availablePlayers.filter { !rostered.contains($0.id) }
+        let searched = query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? available : available.filter { $0.fullName.localizedCaseInsensitiveContains(query) || ($0.teamAbbreviation?.localizedCaseInsensitiveContains(query) == true) || ($0.position?.localizedCaseInsensitiveContains(query) == true) }
+        return searched.filter { player in
+            let matchesPosition = positionFilter == "All" || player.position == positionFilter
+            let matchesTeam = teamFilter == "All" || player.teamAbbreviation == teamFilter
+            let matchesPoints = minimumPoints == 0 || (player.lastSeasonFantasyPoints ?? -1) >= minimumPoints
+            return matchesPosition && matchesTeam && matchesPoints
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.background.ignoresSafeArea()
+                VStack(spacing: 12) {
+                    TextField("Search players", text: $query)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                        #endif
+                        .autocorrectionDisabled()
+                        .padding(12)
+                        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                        .padding(.horizontal, 16)
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 10) {
+                            Picker("Position", selection: $positionFilter) {
+                                ForEach(positions, id: \.self) { Text($0).tag($0) }
+                            }
+                            Picker("Team", selection: $teamFilter) {
+                                ForEach(teams, id: \.self) { Text($0).tag($0) }
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Last season points")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(Theme.textSecondary)
+                                Spacer()
+                                Text(minimumPoints == 0 ? "Any" : minimumPoints.formatted(.number.precision(.fractionLength(0))))
+                                    .font(.caption.weight(.bold).monospacedDigit())
+                                    .foregroundStyle(Theme.accent)
+                            }
+                            #if os(tvOS)
+                            FantasyPlatformStepper("Minimum points", value: Binding(
+                                get: { Int(minimumPoints) }, set: { minimumPoints = Double($0) }
+                            ), in: 0...500, step: 10)
+                            #else
+                            Slider(value: $minimumPoints, in: 0...500, step: 10)
+                                .tint(Theme.accent)
+                            #endif
+                        }
+                    }
+                    .padding(12)
+                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+                    .padding(.horizontal, 16)
+                    List(filteredPlayers) { player in
+                        BannerFantasyDraftPlayerRow(
+                            player: player,
+                            onOpen: { selectedPlayer = player },
+                            onDraft: { Task { await nativeStore.draft(player: player) } }
+                        )
+                        .listRowBackground(Color.clear)
+                    }
+                    .listStyle(.plain)
+                    .hidesScrollContentBackground()
+                }
+            }
+            .navigationTitle("Draft Room")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+            .task { await nativeStore.loadAvailablePlayers() }
+            .sheet(item: $selectedPlayer) { player in
+                BannerFantasyPlayerStatsSheet(player: player)
+            }
+        }
+    }
+}
+
+private struct BannerFantasyDraftPlayerRow: View {
+    let player: BannerFantasyAvailablePlayer
+    let onOpen: () -> Void
+    let onDraft: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: onOpen) {
+                HStack(spacing: 12) {
+                    BannerFantasyPlayerHeadshot(url: player.headshotURL, name: player.fullName, size: 46)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(player.fullName)
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                        Text([player.teamAbbreviation, player.position, player.eligibleSlots.map(\.displayAbbreviation).joined(separator: "/")].compactMap { $0 }.joined(separator: " · "))
+                            .font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                        if !player.keyInfo.isEmpty {
+                            Text(player.keyInfo.prefix(4).joined(separator: " · "))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Theme.textTertiary)
+                                .lineLimit(1)
+                        }
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 6) {
+                Text(player.lastSeasonFantasyPoints.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "--")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(player.lastSeasonFantasyPoints == nil ? Theme.textTertiary : Theme.accent)
+                Button("Draft", action: onDraft)
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+                    .controlSize(.small)
+            }
+        }
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(player.fullName), \(player.teamAbbreviation ?? "team unavailable"), \(player.position ?? "position unavailable"), last season fantasy points \(player.lastSeasonFantasyPoints.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "unavailable")")
+    }
+}
+
+private struct BannerFantasyPlayerStatsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let player: BannerFantasyAvailablePlayer
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.background.ignoresSafeArea()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        HStack(spacing: 14) {
+                            BannerFantasyPlayerHeadshot(url: player.headshotURL, name: player.fullName, size: 72)
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(player.fullName)
+                                    .font(.title2.weight(.bold))
+                                    .foregroundStyle(Theme.textPrimary)
+                                    .lineLimit(2)
+                                Text([player.teamAbbreviation, player.position].compactMap { $0 }.joined(separator: " · "))
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(Theme.textSecondary)
+                            }
+                        }
+                        .padding(16)
+                        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous).strokeBorder(Theme.hairline))
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("LAST SEASON")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(Theme.textSecondary)
+                            HStack {
+                                Text("Fantasy points")
+                                    .foregroundStyle(Theme.textSecondary)
+                                Spacer()
+                                Text(player.lastSeasonFantasyPoints.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "Unavailable")
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(Theme.textPrimary)
+                            }
+                            if let statLine = player.lastSeasonStatLine {
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 86), spacing: 10)], spacing: 10) {
+                                    ForEach(statLine.values.sorted { $0.key.abbreviation < $1.key.abbreviation }, id: \.key) { stat, value in
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(stat.abbreviation)
+                                                .font(.caption2.weight(.bold))
+                                                .foregroundStyle(Theme.textSecondary)
+                                            Text(value.formatted(.number.precision(.fractionLength(value.rounded() == value ? 0 : 2))))
+                                                .font(.headline.weight(.bold).monospacedDigit())
+                                                .foregroundStyle(Theme.textPrimary)
+                                        }
+                                        .padding(10)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+                                    }
+                                }
+                            } else {
+                                BannerFantasyInfoCard(systemImage: "chart.bar.doc.horizontal", title: "Stats unavailable", subtitle: "ESPN did not return season statistics for this player in the roster feed.")
+                            }
+                        }
+                        .padding(16)
+                        .background(Theme.surfaceElevated, in: RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+                    }
+                    .padding(20)
+                }
+            }
+            .navigationTitle("Player Card")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+        }
+    }
+}
+
+private struct BannerFantasyPlayerHeadshot: View {
+    let url: URL?
+    let name: String
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle().fill(Theme.surfaceElevated)
+            if let url {
+                CachedImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    Image(systemName: "person.crop.circle.fill")
+                        .foregroundStyle(Theme.textTertiary)
+                }
+            } else {
+                Text(initials)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(Theme.hairline))
+        .accessibilityHidden(true)
+    }
+
+    private var initials: String {
+        String(name.split(separator: " ").compactMap(\.first).prefix(2)).uppercased()
+    }
+}
+
+private struct BannerFantasyInfoCard: View {
+    let systemImage: String
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: systemImage)
+                .foregroundStyle(Theme.accent)
+                .frame(width: 28)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous).strokeBorder(Theme.hairline))
+    }
+}
+
+private struct BannerFantasyDisclosureRow: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(Theme.textTertiary)
+        }
+        .padding(14)
+    }
+}
+
+private struct FantasyPlatformStepper: View {
+    let title: String
+    @Binding var value: Int
+    let bounds: ClosedRange<Int>
+    let step: Int
+    init(_ title: String, value: Binding<Int>, in bounds: ClosedRange<Int>, step: Int = 1) {
+        self.title = title
+        self._value = value
+        self.bounds = bounds
+        self.step = step
+    }
+    var body: some View {
+        #if os(tvOS)
+        HStack {
+            Text(title)
+            Spacer()
+            Button { value = max(bounds.lowerBound, value - step) } label: {
+                Image(systemName: "minus")
+            }.disabled(value <= bounds.lowerBound).accessibilityLabel("Decrease " + title)
+            Button { value = min(bounds.upperBound, value + step) } label: {
+                Image(systemName: "plus")
+            }.disabled(value >= bounds.upperBound).accessibilityLabel("Increase " + title)
+        }
+        #else
+        Stepper(title, value: $value, in: bounds, step: step)
+        #endif
+    }
+}

@@ -1,0 +1,20 @@
+// Build settings shared by every configuration of the MyApp target.
+//
+// API keys come from Secrets.xcconfig, which is git-ignored. Copy
+// Secrets.example.xcconfig to Secrets.xcconfig and fill in your own keys.
+// Without it the build still succeeds; odds and YouTube features are disabled.
+ODDS_API_KEY =
+YOUTUBE_API_KEY =
+
+// Premium gating. YES unlocks every feature and never talks to StoreKit (the state while
+// in-app purchases are hidden). Set to NO to ship the paywall; scripts/check-release-config.sh
+// reports this flag, and fails the build when STRICT_RELEASE_CONFIG=1.
+BANNER_UNLOCK_ALL_FEATURES = YES
+
+#include? "Secrets.xcconfig"
+
+// CarPlay Audio requires Apple approval and a matching provisioning profile.
+CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*] = Config/CarPlay.entitlements
+CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*] = Config/CarPlay.entitlements
+
+#include? "ProviderDefaults.xcconfig"

@@ -1,0 +1,360 @@
+import Foundation
+import Combine
+
+@MainActor
+final class BannerFantasyStore: ObservableObject {
+    static let shared = BannerFantasyStore()
+
+    @Published private(set) var leagues: [BannerFantasyLeagueBundle] = []
+    @Published private(set) var selectedLeagueID: String?
+    @Published private(set) var availablePlayers: [BannerFantasyAvailablePlayer] = []
+    @Published private(set) var fantasyEventContextsByEventID: [String: FantasyEventContext] = [:]
+    @Published private(set) var fantasyGamesByChannelID: [String: [FantasyPlayerGame]] = [:]
+    @Published private(set) var isLoading = false
+    @Published private(set) var lastError: String?
+
+    private let backend: any BannerFantasyBackendService
+    private let sportsDataProvider: any BannerSportsDataProvider
+    private let userIDKey = "bannertv.nativeFantasy.localUserID.v1"
+    private let selectedLeagueKey = "bannertv.nativeFantasy.selectedLeagueID.v1"
+
+    init(
+        backend: (any BannerFantasyBackendService)? = nil,
+        sportsDataProvider: (any BannerSportsDataProvider)? = nil
+    ) {
+        self.backend = backend ?? LocalBannerFantasyBackendService.shared
+        self.sportsDataProvider = sportsDataProvider ?? ESPNSportsDataProvider()
+        self.selectedLeagueID = UserDefaults.standard.string(forKey: selectedLeagueKey)
+    }
+
+    var currentUserID: String {
+        if let existing = UserDefaults.standard.string(forKey: userIDKey), !existing.isEmpty { return existing }
+        let created = UUID().uuidString
+        UserDefaults.standard.set(created, forKey: userIDKey)
+        return created
+    }
+
+    var selectedBundle: BannerFantasyLeagueBundle? {
+        selectedLeagueID.flatMap { id in leagues.first { $0.league.id == id } } ?? leagues.first
+    }
+
+    var selectedTeam: BannerFantasyTeam? {
+        selectedBundle?.team(for: currentUserID)
+    }
+
+    var selectedRoster: BannerFantasyRoster? {
+        guard let selectedBundle, let selectedTeam else { return nil }
+        return selectedBundle.rosters.first { $0.teamID == selectedTeam.id }
+    }
+
+    var nativeLeagueCount: Int { leagues.count }
+
+    func load() async {
+        isLoading = true
+        lastError = nil
+        defer { isLoading = false }
+        do {
+            leagues = try await backend.loadMyLeagues(userID: currentUserID)
+            if selectedLeagueID == nil || leagues.contains(where: { $0.league.id == selectedLeagueID }) == false {
+                selectedLeagueID = leagues.first?.league.id
+                persistSelectedLeague()
+            }
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func selectLeague(id: String) {
+        selectedLeagueID = id
+        persistSelectedLeague()
+    }
+
+    func createLeague(_ request: BannerFantasyCreateLeagueRequest) async {
+        isLoading = true
+        lastError = nil
+        defer { isLoading = false }
+        do {
+            let bundle = try await backend.createLeague(request, commissionerUserID: currentUserID)
+            upsert(bundle)
+            selectedLeagueID = bundle.league.id
+            persistSelectedLeague()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func joinLeague(_ request: BannerFantasyJoinLeagueRequest) async {
+        isLoading = true
+        lastError = nil
+        defer { isLoading = false }
+        do {
+            let bundle = try await backend.joinLeague(request, userID: currentUserID)
+            upsert(bundle)
+            selectedLeagueID = bundle.league.id
+            persistSelectedLeague()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func loadAvailablePlayers() async {
+        let sport = selectedBundle?.league.sport ?? .nhl
+        do {
+            let loaded = try await sportsDataProvider.currentPlayers(for: sport)
+            if !loaded.isEmpty {
+                availablePlayers = loaded
+            } else if availablePlayers.isEmpty {
+                availablePlayers = Self.developmentPlayerPool(for: sport)
+            }
+        } catch {
+            if availablePlayers.isEmpty { availablePlayers = Self.developmentPlayerPool(for: sport) }
+        }
+    }
+
+    /// `epgRepository`/`streamStore` are optional: the app-launch fantasy refresh fires before
+    /// `RootView` (which owns those stores) exists, so it calls this without them and just skips
+    /// channel matching for that pass — `RootView`'s own forced refresh (which has both) fills
+    /// `matchedChannel` in shortly after.
+    func refreshEventContexts(
+        channels: [Channel], preferredLanguages: Set<String>,
+        epgRepository: EPGRepository? = nil, streamStore: StreamAvailabilityStore? = nil
+    ) async {
+        guard let bundle = selectedBundle, let roster = selectedRoster else {
+            fantasyEventContextsByEventID = [:]
+            fantasyGamesByChannelID = [:]
+            return
+        }
+        let sport = bundle.league.sport
+        let start = Calendar.current.startOfDay(for: Date())
+        let matches = (try? await sportsDataProvider.currentSchedule(for: sport, starting: start, days: 8)) ?? []
+
+        let entryMatches = roster.entries.map { Self.match(for: $0, in: matches) }
+        if let epgRepository, let streamStore {
+            var distinctMatches: [Match] = []
+            var seenMatchIDs = Set<String>()
+            for match in entryMatches where match != nil {
+                if seenMatchIDs.insert(match!.id).inserted { distinctMatches.append(match!) }
+            }
+            await streamStore.scan(matches: distinctMatches, channels: channels, epgRepository: epgRepository)
+        }
+
+        let games = zip(roster.entries, entryMatches).map { entry, match -> FantasyPlayerGame in
+            let opponent = match.flatMap { Self.opponent(for: entry, match: $0) }
+            let ranked = match.flatMap { m in streamStore?.topRanked(for: m.id, limit: 4) } ?? []
+            let player = FantasyPlayer(
+                id: "native-\(entry.id)",
+                provider: .banner,
+                sport: sport,
+                firstName: nil,
+                lastName: nil,
+                fullName: entry.playerName,
+                teamAbbreviation: entry.nhlTeamAbbreviation,
+                position: entry.primaryPosition,
+                fantasyPositions: entry.eligibleSlots.map(\.rawValue),
+                status: nil,
+                injuryStatus: entry.injuryStatus,
+                jerseyNumber: nil,
+                externalIDs: FantasyPlayerExternalIDs(espnID: entry.canonicalPlayerID, sportradarID: nil, yahooID: nil, fantasyDataID: nil, statsID: nil, rotowireID: nil)
+            )
+            return FantasyPlayerGame(
+                id: "native-\(entry.id)-\(match?.id ?? "none")",
+                fantasyPlayer: player,
+                bannerPlayer: BannerPlayerIdentity(id: entry.canonicalPlayerID, leaguePath: sport.bannerLeaguePath, displayName: entry.playerName, teamAbbreviation: entry.nhlTeamAbbreviation, position: entry.primaryPosition, espnAthleteID: entry.canonicalPlayerID, source: "banner.nativeFantasy"),
+                event: match,
+                opponent: opponent,
+                gameState: match.map { Self.gameLinkState(for: $0) } ?? .noGame,
+                fantasyPoints: nil,
+                projectedPoints: nil,
+                matchedChannel: ranked.first,
+                rosterSlotKind: nil,
+                lineupPosition: entry.primaryPosition
+            )
+        }
+        rebuildIndexes(from: games)
+    }
+
+    func fantasyEventContext(for match: Match) -> FantasyEventContext? {
+        fantasyEventContextsByEventID[match.id]
+    }
+
+    func fantasyGames(for channelID: String) -> [FantasyPlayerGame] {
+        fantasyGamesByChannelID[channelID] ?? []
+    }
+
+    func fantasyGames(for programme: EPGProgramme, channel: CanonicalChannel) -> [FantasyPlayerGame] {
+        let ids = channel.allStreams.map(\.providerChannelId) + [channel.id]
+        for id in ids {
+            guard let games = fantasyGamesByChannelID[id] else { continue }
+            let overlapping = games.filter { game in
+                guard let event = game.event else { return false }
+                return event.date >= programme.start.addingTimeInterval(-2 * 3600)
+                    && event.date < programme.end.addingTimeInterval(2 * 3600)
+            }
+            if !overlapping.isEmpty { return overlapping }
+        }
+        return []
+    }
+
+    func fantasyIndicatorCount(for programme: EPGProgramme, channel: CanonicalChannel) -> Int {
+        fantasyGames(for: programme, channel: channel).count
+    }
+
+    var liveEventContexts: [FantasyEventContext] {
+        fantasyEventContextsByEventID.values.filter(\.isLive).sorted { $0.event.date < $1.event.date }
+    }
+
+    var todayEventContexts: [FantasyEventContext] {
+        fantasyEventContextsByEventID.values
+            .filter { Calendar.current.isDateInToday($0.event.date) && $0.event.state != .final }
+            .sorted { $0.event.date < $1.event.date }
+    }
+
+    func draft(player: BannerFantasyAvailablePlayer) async {
+        guard let selectedBundle, let selectedTeam else { return }
+        do {
+            let bundle = try await backend.draftPlayer(leagueID: selectedBundle.league.id, teamID: selectedTeam.id, player: player, availablePlayers: availablePlayers)
+            upsert(bundle)
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func add(player: BannerFantasyAvailablePlayer, dropPlayerEntryID: String? = nil) async {
+        guard let selectedBundle, let selectedTeam else { return }
+        do {
+            let bundle = try await backend.addFreeAgent(leagueID: selectedBundle.league.id, teamID: selectedTeam.id, player: player, dropPlayerEntryID: dropPlayerEntryID)
+            upsert(bundle)
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func drop(playerEntryID: String) async {
+        guard let selectedBundle, let selectedTeam else { return }
+        do {
+            let bundle = try await backend.dropPlayer(leagueID: selectedBundle.league.id, teamID: selectedTeam.id, playerEntryID: playerEntryID)
+            upsert(bundle)
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func exportData() async -> BannerFantasyPersistenceEnvelope? {
+        do {
+            return try await backend.exportData()
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func resetLocalData() async {
+        do {
+            try await backend.resetLocalData()
+            leagues = []
+            selectedLeagueID = nil
+            fantasyEventContextsByEventID = [:]
+            fantasyGamesByChannelID = [:]
+            persistSelectedLeague()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func moveLineup(playerEntryID: String, to slot: BannerFantasyRosterSlot, scoringDate: Date = Date()) async {
+        guard let selectedBundle, let selectedTeam else { return }
+        do {
+            _ = try await backend.moveLineupSlot(leagueID: selectedBundle.league.id, teamID: selectedTeam.id, scoringDate: scoringDate, playerEntryID: playerEntryID, to: slot)
+            await load()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    private func rebuildIndexes(from games: [FantasyPlayerGame]) {
+        var byEvent: [String: [FantasyPlayerGame]] = [:]
+        var byChannel: [String: [FantasyPlayerGame]] = [:]
+        for game in games {
+            if let eventId = game.event?.id { byEvent[eventId, default: []].append(game) }
+            if let channelId = game.matchedChannel?.channel.id { byChannel[channelId, default: []].append(game) }
+        }
+        fantasyEventContextsByEventID = Dictionary(uniqueKeysWithValues: byEvent.compactMap { eventID, games in
+            guard let event = games.first?.event else { return nil }
+            let matched = games.compactMap(\.matchedChannel).sorted { $0.score > $1.score }.first
+            return (eventID, FantasyEventContext(event: event, playerGames: games, matchedChannel: matched))
+        })
+        fantasyGamesByChannelID = byChannel
+    }
+
+    private static func match(for entry: BannerFantasyPlayerEntry, in matches: [Match]) -> Match? {
+        guard let team = entry.nhlTeamAbbreviation else { return nil }
+        return matches
+            .filter { $0.home.abbreviation.caseInsensitiveCompare(team) == .orderedSame || $0.away.abbreviation.caseInsensitiveCompare(team) == .orderedSame }
+            .sorted { lhs, rhs in
+                switch (lhs.state, rhs.state) {
+                case (.live, .live): return lhs.date < rhs.date
+                case (.live, _): return true
+                case (_, .live): return false
+                default: return lhs.date < rhs.date
+                }
+            }
+            .first
+    }
+
+    private static func opponent(for entry: BannerFantasyPlayerEntry, match: Match) -> TeamSide? {
+        guard let team = entry.nhlTeamAbbreviation else { return nil }
+        if match.home.abbreviation.caseInsensitiveCompare(team) == .orderedSame { return match.away }
+        if match.away.abbreviation.caseInsensitiveCompare(team) == .orderedSame { return match.home }
+        return nil
+    }
+
+    private static func gameLinkState(for match: Match) -> FantasyGameLinkState {
+        switch match.state {
+        case .pre: return .upcoming
+        case .live: return .live
+        case .final: return .final
+        }
+    }
+
+    private func upsert(_ bundle: BannerFantasyLeagueBundle) {
+        if let index = leagues.firstIndex(where: { $0.league.id == bundle.league.id }) {
+            leagues[index] = bundle
+        } else {
+            leagues.append(bundle)
+        }
+    }
+
+    private func persistSelectedLeague() {
+        UserDefaults.standard.set(selectedLeagueID, forKey: selectedLeagueKey)
+    }
+
+    private static func developmentPlayerPool(for sport: FantasySport) -> [BannerFantasyAvailablePlayer] {
+        switch sport {
+        case .nfl:
+            return [
+                BannerFantasyAvailablePlayer(id: "espn-nfl-3139477", fullName: "Patrick Mahomes", teamAbbreviation: "KC", position: "QB", eligibleSlots: [.quarterback], injuryStatus: nil),
+                BannerFantasyAvailablePlayer(id: "espn-nfl-4242335", fullName: "Justin Jefferson", teamAbbreviation: "MIN", position: "WR", eligibleSlots: [.wideReceiver, .flex], injuryStatus: nil),
+                BannerFantasyAvailablePlayer(id: "espn-nfl-3117251", fullName: "Christian McCaffrey", teamAbbreviation: "SF", position: "RB", eligibleSlots: [.runningBack, .flex], injuryStatus: nil)
+            ]
+        case .nhl:
+            return [
+                BannerFantasyAvailablePlayer(id: "espn-nhl-4024123", fullName: "Auston Matthews", teamAbbreviation: "TOR", position: "C", eligibleSlots: [.center, .forward, .utility], injuryStatus: nil),
+                BannerFantasyAvailablePlayer(id: "espn-nhl-3895074", fullName: "Connor McDavid", teamAbbreviation: "EDM", position: "C", eligibleSlots: [.center, .forward, .utility], injuryStatus: nil),
+                BannerFantasyAvailablePlayer(id: "espn-nhl-4233563", fullName: "Cale Makar", teamAbbreviation: "COL", position: "D", eligibleSlots: [.defense, .utility], injuryStatus: nil),
+                BannerFantasyAvailablePlayer(id: "espn-nhl-4063262", fullName: "Jake Oettinger", teamAbbreviation: "DAL", position: "G", eligibleSlots: [.goalie], injuryStatus: nil)
+            ]
+        case .nba:
+            return [
+                BannerFantasyAvailablePlayer(id: "espn-nba-1966", fullName: "LeBron James", teamAbbreviation: "LAL", position: "SF", eligibleSlots: [.smallForward, .forward, .utility], injuryStatus: nil),
+                BannerFantasyAvailablePlayer(id: "espn-nba-3975", fullName: "Stephen Curry", teamAbbreviation: "GS", position: "PG", eligibleSlots: [.pointGuard, .comboGuard, .utility], injuryStatus: nil),
+                BannerFantasyAvailablePlayer(id: "espn-nba-203999", fullName: "Nikola Jokic", teamAbbreviation: "DEN", position: "C", eligibleSlots: [.center, .utility], injuryStatus: nil)
+            ]
+        case .mlb:
+            return [
+                BannerFantasyAvailablePlayer(id: "espn-mlb-39832", fullName: "Shohei Ohtani", teamAbbreviation: "LAD", position: "UTIL", eligibleSlots: [.utility], injuryStatus: nil),
+                BannerFantasyAvailablePlayer(id: "espn-mlb-33192", fullName: "Aaron Judge", teamAbbreviation: "NYY", position: "OF", eligibleSlots: [.outfield, .utility], injuryStatus: nil),
+                BannerFantasyAvailablePlayer(id: "espn-mlb-39878", fullName: "Corbin Burnes", teamAbbreviation: "ARI", position: "SP", eligibleSlots: [.startingPitcher, .pitcher], injuryStatus: nil)
+            ]
+        }
+    }
+}
