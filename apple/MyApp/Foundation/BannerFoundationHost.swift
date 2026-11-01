@@ -9,7 +9,7 @@ final class BannerFoundationHost {
     init() {
         let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("BannerFoundation", isDirectory: true)
-        foundation = AppleFoundation(cacheDirectory: cache.path, vault: KeychainAddonVault())
+        foundation = AppleFoundation(cacheDirectory: cache.path, keychain: KeychainAddonVault())
     }
 
     func scores(on date: Date?, league: League) async throws -> [Match] {

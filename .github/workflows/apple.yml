@@ -52,7 +52,6 @@ jobs:
       - name: Build original native route, then test shared route and real NHL request
         run: apple/scripts/verify-foundation.sh
       - name: Build Apple frameworks and run simulator contracts
-        if: ${{ !cancelled() }}
         run: >-
           ./gradlew :shared:iosSimulatorArm64Test :shared:linkDebugFrameworkIosArm64
           :shared:linkDebugFrameworkIosSimulatorArm64 :shared:linkDebugFrameworkMacosArm64

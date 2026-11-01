@@ -5,7 +5,7 @@ import BannerFoundation
 
 /// Device-only add-on configuration. The normal cloud-backup document never includes these URLs.
 /// A locked keychain is an error, never an empty library that could overwrite saved credentials.
-final class KeychainAddonVault: NSObject, AddonVault {
+nonisolated final class KeychainAddonVault: NSObject, AppleAddonStorage {
     private let service = "tv.banner.foundation.addons.v1"
     private let account = "configured-manifests"
 
@@ -16,13 +16,13 @@ final class KeychainAddonVault: NSObject, AddonVault {
          kSecAttrSynchronizable as String: false]
     }
 
-    func read() throws -> String? {
+    func readDocument() throws -> String {
         var query = key
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return nil }
+        if status == errSecItemNotFound { return "[]" }
         guard status == errSecSuccess,
               let data = result as? Data,
               let value = String(data: data, encoding: .utf8) else {
@@ -31,7 +31,7 @@ final class KeychainAddonVault: NSObject, AddonVault {
         return value
     }
 
-    func replace(value: String) throws {
+    func replaceDocument(value: String) throws {
         let data = Data(value.utf8)
         let update: [String: Any] = [kSecValueData as String: data,
                                     kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
