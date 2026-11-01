@@ -1,0 +1,19 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="16dp" android:background="@drawable/phone_widget_background">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="40dp" android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:id="@+id/widget_title" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center_vertical" android:text="BANNER" android:textColor="#FFFFFF" android:textStyle="bold" android:textSize="16sp" />
+        <TextView android:id="@+id/widget_refresh" android:layout_width="48dp" android:layout_height="match_parent" android:gravity="center" android:text="↻" android:textColor="#83ADFF" android:textSize="24sp" android:contentDescription="Refresh sports scores" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="vertical" android:gravity="center_vertical">
+        <TextView android:id="@+id/widget_game_1" style="@style/WidgetGameTitle" />
+        <TextView android:id="@+id/widget_detail_1" style="@style/WidgetGameDetail" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="vertical" android:gravity="center_vertical">
+        <TextView android:id="@+id/widget_game_2" style="@style/WidgetGameTitle" />
+        <TextView android:id="@+id/widget_detail_2" style="@style/WidgetGameDetail" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="vertical" android:gravity="center_vertical">
+        <TextView android:id="@+id/widget_game_3" style="@style/WidgetGameTitle" />
+        <TextView android:id="@+id/widget_detail_3" style="@style/WidgetGameDetail" />
+    </LinearLayout>
+    <TextView android:id="@+id/widget_checked" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#A7B1C4" android:textSize="10sp" android:layout_marginTop="8dp" />
+</LinearLayout>

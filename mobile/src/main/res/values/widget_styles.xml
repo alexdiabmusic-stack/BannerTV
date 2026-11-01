@@ -1,0 +1,5 @@
+<resources>
+    <string name="phone_widget_description">Followed sports and scores with spoiler protection</string>
+    <style name="WidgetGameTitle"><item name="android:layout_width">match_parent</item><item name="android:layout_height">wrap_content</item><item name="android:layout_marginTop">9dp</item><item name="android:textColor">#F2F5FC</item><item name="android:textStyle">bold</item><item name="android:textSize">14sp</item><item name="android:maxLines">1</item><item name="android:ellipsize">end</item></style>
+    <style name="WidgetGameDetail"><item name="android:layout_width">match_parent</item><item name="android:layout_height">wrap_content</item><item name="android:textColor">#A7B1C4</item><item name="android:textSize">11sp</item><item name="android:maxLines">1</item><item name="android:ellipsize">end</item></style>
+</resources>

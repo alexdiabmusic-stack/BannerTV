@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Debug builds only: lets a test script add a playlist (adb shell am broadcast) where an emulator can't type into fields. -->
+        <receiver android:name=".DebugPlaylistReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="com.alexdiab.stadiatv.DEBUG_ADD_XTREAM" />
+                <action android:name="com.alexdiab.stadiatv.DEBUG_ZAP_TEST" />
+                <action android:name="com.alexdiab.stadiatv.DEBUG_SAMPLE" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

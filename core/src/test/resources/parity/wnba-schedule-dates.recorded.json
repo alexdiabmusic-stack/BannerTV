@@ -1,0 +1,21 @@
+[
+  {
+    "gameId": "1042600303",
+    "gameTimeUTC": "1900-01-01T00:00:00Z",
+    "gameDateTimeUTC": "2026-10-22T00:00:00Z",
+    "gameDateUTC": "2026-10-21T04:00:00Z",
+    "gameStatusText": "Final"
+  },
+  {
+    "gameId": "1042600306",
+    "gameTimeUTC": "1900-01-01T00:00:00Z",
+    "gameDateTimeUTC": "2026-10-30T00:00:00Z",
+    "gameDateUTC": "2026-10-29T04:00:00Z"
+  },
+  {
+    "gameId": "1042600307",
+    "gameTimeUTC": "1900-01-01T00:00:00Z",
+    "gameDateTimeUTC": "2026-11-01T00:00:00Z",
+    "gameDateUTC": "2026-10-31T04:00:00Z"
+  }
+]

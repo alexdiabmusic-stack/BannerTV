@@ -1,0 +1,17 @@
+# iOS CFL fixtures
+
+Copied without modification from StadiaTV-iOS/CFLCoreTests/Tests/CFLCoreTests/Fixtures.
+Used to test the same expected behavior as CFLMappingTests.swift.
+
+File | SHA-256
+--- | ---
+seasons.json | b1aca0f63a4e0c540f42070fd4d09f03e0367d461bb02a705f581bc5c8b47967
+teams.json | 8c7c59a26802afa32cfe7e979afc0fa3bb530d689a6ce4bc98918344bf865495
+venues.json | 23e2fae122a4329fe143b45a35dad215657c7bb6ff5a88402a4f160f81a57241
+fixtures-season75.json | 0101364ebb4a52376138b9f4b02e5bf49b3268878009d535549b3a3ce747d603
+fixture-finished.json | 34504230c727296c06c262ac7f17bb17159122402ee92b31a81e44e3a3b3c614
+fixture-scheduled.json | 8156118b71aa5a3830ac5a4072d21349a54a530f65160af74adf89d8fa09c5e1
+fixture-greycup-tbd.json | e100088bfec9fffe059d3d253446926140ceaf6d485aade06a8521e9c656fe1d
+standings-2026.json | 2d994c52e7ea50025184b850989d44d8ed4762fa7f724b4e2c1e803b2ab86fd2
+roster-team19.json | 3da86f9dbb371ff7c23e7d0053315e6fa02c787d2db889450a7847e8c709d55d
+leaders-2026.json | a543ed09db0509205818c1cb44b71f54448413189e316284de5571012056c93a

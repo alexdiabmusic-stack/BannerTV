@@ -1,0 +1,46 @@
+# Baseline profile: tells ART to compile these classes ahead of time when the app is installed, so the first
+# launch and the first scrolls don't run interpreted. Fire TV sticks are slow enough that this is the
+# difference between a jerky first minute and a smooth one.
+#
+# It is a hand-written, package-level profile (everything the app and its UI/player stack run on the
+# launch -> Home -> player path), not one recorded from a macrobenchmark. Replace it with a generated one
+# (androidx.baselineprofile) when a physical device is available; the wider this list, the longer install-time
+# compilation takes, which is why only the hot libraries are listed.
+
+# The app
+Lcom/alexdiab/stadiatv/**;
+HSPLcom/alexdiab/stadiatv/**;->**(**)**
+
+# Compose and the TV toolkit: composition, layout, drawing, focus and lazy lists
+Landroidx/compose/**;
+HSPLandroidx/compose/**;->**(**)**
+Landroidx/tv/**;
+HSPLandroidx/tv/**;->**(**)**
+Landroidx/activity/**;
+HSPLandroidx/activity/**;->**(**)**
+Landroidx/lifecycle/**;
+HSPLandroidx/lifecycle/**;->**(**)**
+Landroidx/savedstate/**;
+HSPLandroidx/savedstate/**;->**(**)**
+
+# Playback
+Landroidx/media3/exoplayer/**;
+HSPLandroidx/media3/exoplayer/**;->**(**)**
+Landroidx/media3/common/**;
+HSPLandroidx/media3/common/**;->**(**)**
+Landroidx/media3/datasource/**;
+HSPLandroidx/media3/datasource/**;->**(**)**
+Landroidx/media3/ui/**;
+HSPLandroidx/media3/ui/**;->**(**)**
+
+# Networking, images and JSON on the data path
+Lokhttp3/**;
+HSPLokhttp3/**;->**(**)**
+Lokio/**;
+HSPLokio/**;->**(**)**
+Lcoil3/**;
+HSPLcoil3/**;->**(**)**
+Lkotlinx/serialization/**;
+HSPLkotlinx/serialization/**;->**(**)**
+Lkotlinx/coroutines/**;
+HSPLkotlinx/coroutines/**;->**(**)**

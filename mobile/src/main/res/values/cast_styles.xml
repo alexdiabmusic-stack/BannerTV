@@ -1,0 +1,6 @@
+<resources>
+    <style name="ThemeOverlay.BannerCastDark" parent="ThemeOverlay.AppCompat.Dark"><item name="mediaRouteButtonStyle">@style/Widget.BannerCastDark</item></style>
+    <style name="ThemeOverlay.BannerCastLight" parent="ThemeOverlay.AppCompat.Light"><item name="mediaRouteButtonStyle">@style/Widget.BannerCastLight</item></style>
+    <style name="Widget.BannerCastDark" parent="Widget.MediaRouter.MediaRouteButton"><item name="mediaRouteButtonTint">#D5DEEE</item></style>
+    <style name="Widget.BannerCastLight" parent="Widget.MediaRouter.Light.MediaRouteButton"><item name="mediaRouteButtonTint">#263246</item></style>
+</resources>

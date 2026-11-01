@@ -1,0 +1,10 @@
+[
+  {"type":"Card","time":8,"eventId":14627980,"isHome":true,"card":"Yellow"},
+  {"type":"Half","time":45,"halfStrKey":"halftime_short","halfStrShort":"HT","reactKey":"undefined45HalfNaNundefinedundefined"},
+  {"type":"Goal","time":62,"eventId":14630277,"isHome":false},
+  {"type":"Goal","time":69,"eventId":14630623,"isHome":true},
+  {"type":"Goal","time":84,"eventId":14631210,"isHome":true},
+  {"type":"Substitution","time":90,"overloadTime":5,"isHome":false,"reactKey":"undefined90SubstitutionNaN805352false"},
+  {"type":"Card","time":90,"overloadTime":7,"eventId":14631422,"isHome":true,"card":"Yellow"},
+  {"type":"Half","time":90,"halfStrKey":"fulltime_short","halfStrShort":"FT","reactKey":"undefined90HalfNaNundefinedundefined"}
+]
