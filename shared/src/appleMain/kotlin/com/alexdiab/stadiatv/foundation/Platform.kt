@@ -14,7 +14,13 @@ actual object SportsTime {
         return millis(checkNotNull(c.dateByAddingUnit(NSCalendarUnitDay, days.toLong(), date(at), 0u)))
     }
     actual fun parseLocal(raw: String, pattern: String, zone: String): Long? {
-        val formatter = NSDateFormatter().apply { locale = NSLocale(localeIdentifier = "en_US_POSIX"); timeZone = NSTimeZone.timeZoneWithName(zone); dateFormat = pattern; lenient = false }
+        val timeZoneForDate = NSTimeZone.timeZoneWithName(zone) ?: return null
+        val formatter = NSDateFormatter().apply {
+            locale = NSLocale(localeIdentifier = "en_US_POSIX")
+            timeZone = timeZoneForDate
+            dateFormat = pattern
+            lenient = false
+        }
         return formatter.dateFromString(raw)?.takeIf { formatter.stringFromDate(it) == raw }?.let(::millis)
     }
     private fun date(at: Long) = NSDate.dateWithTimeIntervalSince1970(at / 1000.0)
