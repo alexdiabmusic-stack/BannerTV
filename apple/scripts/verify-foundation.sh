@@ -18,13 +18,15 @@ fi
 common=(-project 'Stadia TV.xcodeproj' -configuration Debug -destination "id=$destination" CODE_SIGNING_ALLOWED=NO)
 verify_discovery() {
     xcodebuild build -scheme MyApp "${common[@]}" -derivedDataPath "$scratch/native" BANNER_KMP_ENABLED=NO
-    TEST_RUNNER_BANNER_LIVE_PROBE=1 xcodebuild test -scheme MyApp "${common[@]}" \
-        -derivedDataPath "$scratch/shared" BANNER_KMP_ENABLED=YES -parallel-testing-enabled NO \
-        -only-testing:MyAppUnitTests/BannerFoundationDiscoveryTests/testRealSharedNHLDiscoveryPreservesAppleNavigationIDs \
-        -only-testing:MyAppUnitTests/BannerFoundationDiscoveryTests/testSharedScorePreservesTheNativeMatchUsedForNavigationAndPlayback \
-        -resultBundlePath "$scratch/live.xcresult"
-    xcrun xcresulttool get test-results tests --path "$scratch/live.xcresult" > "$scratch/live.json"
-    python3 - "$scratch/live.json" <<'PY'
+    local action=test
+    for iteration in 1 2 3; do
+        TEST_RUNNER_BANNER_LIVE_PROBE=1 xcodebuild "$action" -scheme MyApp "${common[@]}" \
+            -derivedDataPath "$scratch/shared" BANNER_KMP_ENABLED=YES -parallel-testing-enabled NO \
+            -only-testing:MyAppUnitTests/BannerFoundationDiscoveryTests/testRealSharedNHLDiscoveryPreservesAppleNavigationIDs \
+            -only-testing:MyAppUnitTests/BannerFoundationDiscoveryTests/testSharedScorePreservesTheNativeMatchUsedForNavigationAndPlayback \
+            -resultBundlePath "$scratch/live-$iteration.xcresult"
+        xcrun xcresulttool get test-results tests --path "$scratch/live-$iteration.xcresult" > "$scratch/live-$iteration.json"
+        python3 - "$scratch/live-$iteration.json" <<'PY'
 import json,sys
 def passed(node, required):
     if isinstance(node, list):
@@ -42,6 +44,8 @@ with open(sys.argv[1]) as f:
         if not passed(nodes, name):
             raise SystemExit(f"{name} must execute and pass.")
 PY
+        action=test-without-building
+    done
 }
 
 verify_tests() {

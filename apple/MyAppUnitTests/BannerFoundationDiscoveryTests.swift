@@ -34,11 +34,13 @@ final class BannerFoundationDiscoveryTests: XCTestCase {
 
     @MainActor func testRealSharedNHLDiscoveryPreservesAppleNavigationIDs() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["BANNER_LIVE_PROBE"] == "1", "Explicit live integration run")
+        print("NHL probe starting shared discovery")
         let provider = NHLProvider()
         XCTAssertTrue(provider.usesSharedDiscovery)
         let league = League(name: "NHL", shortName: "NHL", path: "hockey/nhl", group: .hockey)
         let day = try XCTUnwrap(ISO8601DateFormatter().date(from: "2024-06-24T16:00:00Z"))
         let scores = try await SportsRepository.shared.legacyScoreboard(for: league, on: day)
+        print("NHL probe received the score feed")
         let game = try XCTUnwrap(scores.first { $0.id == "2023030417" })
         XCTAssertEqual(game.canonicalID, "game:\(league.bannerKey):nhl:2023030417")
         XCTAssertEqual(game.home.teamID, "13")
@@ -48,6 +50,7 @@ final class BannerFoundationDiscoveryTests: XCTestCase {
         let kickoff = try XCTUnwrap(ISO8601DateFormatter().date(from: "2024-06-25T00:00:00Z"))
         XCTAssertEqual(game.date, kickoff)
         let schedule = try await SportsRepository.shared.legacyScoreboards(for: league, starting: kickoff, days: 1)
+        print("NHL probe received the schedule feed")
         let scheduled = try XCTUnwrap(schedule.first { $0.canonicalID == game.canonicalID })
         XCTAssertEqual(scheduled.date, kickoff)
         XCTAssertTrue(schedule.allSatisfy { Calendar.current.isDate($0.date, inSameDayAs: kickoff) })

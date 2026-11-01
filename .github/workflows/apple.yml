@@ -52,6 +52,15 @@ jobs:
       - name: Build original native route, then test shared route and real NHL request
         id: discovery
         run: BANNER_XCODE_SCRATCH="$RUNNER_TEMP/banner-xcode" apple/scripts/verify-foundation.sh discovery
+      - name: Report the faulting simulator stack if discovery fails
+        if: ${{ failure() && steps.discovery.outcome == 'failure' }}
+        run: |
+          scratch="$RUNNER_TEMP/banner-xcode"
+          for result in "$scratch"/live-*.xcresult; do
+            [[ -d "$result" ]] || continue
+            xcrun xcresulttool export diagnostics --path "$result" --output-path "$scratch/diagnostics/$(basename "$result")" || true
+          done
+          python3 apple/scripts/report-simulator-crash.py "$scratch"
       - name: Build Apple frameworks and run simulator contracts
         run: >-
           ./gradlew :shared:iosSimulatorArm64Test :shared:linkDebugFrameworkIosArm64
