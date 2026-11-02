@@ -360,6 +360,10 @@ nonisolated enum LinkerPatterns {
     static let time = re(#"\b(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\s*(ET|EST|EDT|CT|CST|CDT|MT|PT|PST|PDT|UK|GMT|BST|CET|CEST)?\b"#)
     static let iso = re(#"\b(20\d{2})-(\d{2})-(\d{2})(?:\s+(\d{2}):(\d{2}))?"#)
     static let bracketQuality = re(#"\[(?:HD|FHD|UHD|SD|4K|BACKUP|BK)\]"#)
+    static let slotPrefix = re(#"^\s*([a-z]{2,5})\s*(?=[:|]|(?:game\s*)?\d+\b)"#)
+    static let slotLeagues = ["NBA": "basketball/nba", "WNBA": "basketball/wnba",
+                             "NHL": "hockey/nhl", "AHL": "hockey/ahl", "MLB": "baseball/mlb",
+                             "NFL": "football/nfl", "NCAAF": "football/college-football", "CFL": "football/cfl"]
     static let sportsCategory = re(#"\b(teams?|nhl|nba|mlb|nfl|mls|sports?|wnba)\b"#)
 
     static func matches(_ r: NSRegularExpression, _ s: String) -> Bool {
@@ -387,7 +391,7 @@ nonisolated public final class StreamLinker: Sendable {
         var streams: [Int32]     // every stream (mirror) that uses this guide id
         var progs: [Int32]       // sorted positions of its programmes
     }
-    nonisolated struct EventName { var head: String; var times: [(h: Int, m: Int, tz: String)]; var iso: (y: Int, mo: Int, d: Int)? }
+    nonisolated struct EventName { var head: String; var slotLeague: String?; var times: [(h: Int, m: Int, tz: String)]; var iso: (y: Int, mo: Int, d: Int)? }
 
     let input: [LinkerStream]
     let streams: [S]
@@ -665,7 +669,9 @@ nonisolated public final class StreamLinker: Sendable {
         if let m = LinkerPatterns.iso.firstMatch(in: n, range: NSRange(location: 0, length: ns.length)) {
             iso = (Int(ns.substring(with: m.range(at: 1))) ?? 0, Int(ns.substring(with: m.range(at: 2))) ?? 0, Int(ns.substring(with: m.range(at: 3))) ?? 0)
         }
-        return EventName(head: n, times: times.map { (h: $0.0, m: $0.1, tz: $0.2) }, iso: iso.map { (y: $0.0, mo: $0.1, d: $0.2) })
+        let prefix = LinkerPatterns.slotPrefix.firstMatch(in: n, range: NSRange(location: 0, length: ns.length))
+        let slotLeague = prefix.flatMap { LinkerPatterns.slotLeagues[ns.substring(with: $0.range(at: 1)).uppercased()] }
+        return EventName(head: n, slotLeague: slotLeague, times: times.map { (h: $0.0, m: $0.1, tz: $0.2) }, iso: iso.map { (y: $0.0, mo: $0.1, d: $0.2) })
     }
 
     // MARK: fixture matching
@@ -897,6 +903,9 @@ nonisolated public final class StreamLinker: Sendable {
             let i = Int(i32)
             let name = input[i].name
             let ev = StreamLinker.parseEventName(name)
+            // A slot advertised for another league cannot establish a name-only match.
+            // A confirmed programme on this same channel still qualifies through the guide above.
+            if let league = ev.slotLeague, !event.league.isEmpty, league != event.league { continue }
             guard StreamLinker.fixtureIn(ev.head, A, B).0 else { continue }
             if let iso = ev.iso {
                 var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "UTC")!

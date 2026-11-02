@@ -117,6 +117,23 @@ struct StreamLinkerTests {
         #expect(feeds.contains { $0.key == "t:kings" && $0.tier == .teamChannel }, "dedicated team channel named after a participant")
     }
 
+    @Test("A conflicting slot prefix rejects name-only matches but the playlist guide remains authoritative")
+    func conflictingSlotLeagueAndGuide() {
+        let event = LinkerEvent(id: "2023030417", league: "hockey/nhl", kickoff: utc("2024-06-25T00:00Z"),
+                                home: .init(name: "Florida Panthers"), away: .init(name: "Edmonton Oilers"))
+        let fixture = "Edmonton Oilers @ Florida Panthers 8:00 PM ET"
+        let streams = [
+            LinkerStream(id: "valid", name: "US ★ NHL 01: " + fixture, category: "NHL", guideID: nil),
+            LinkerStream(id: "wrong", name: "US ★ AHL 01: " + fixture, category: "AHL", guideID: nil),
+            LinkerStream(id: "guided", name: "US ★ AHL 02: " + fixture, category: "AHL", guideID: "guide-a"),
+        ]
+        let listing = prog("guide-a", "2024-06-25T00:00Z", "2024-06-25T03:00Z", "NHL Hockey: Edmonton Oilers at Florida Panthers")
+        let feeds = StreamLinker(streams: streams, programmes: [listing]).link(event)
+        #expect(feeds.contains { $0.streamIDs.contains("valid") && $0.tier == .eventChannel })
+        #expect(!feeds.contains { $0.streamIDs.contains("wrong") })
+        #expect(feeds.contains { $0.streamIDs.contains("guided") && $0.tier == .liveListing })
+    }
+
     @Test("Event-slot channel names are matched, but only when the stated kickoff time agrees")
     func eventChannelNames() {
         let phillies = LinkerEvent(id: "m", league: "baseball/mlb", kickoff: utc("2026-09-29T18:00Z"),

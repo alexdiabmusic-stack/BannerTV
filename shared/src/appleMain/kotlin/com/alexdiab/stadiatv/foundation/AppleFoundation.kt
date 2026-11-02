@@ -19,8 +19,21 @@ import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
 import kotlinx.coroutines.*
 
+/** A missing Keychain item returns the empty JSON library. A locked or unreadable item throws. */
+interface AppleAddonStorage {
+    @Throws(Exception::class)
+    fun readDocument(): String
+    @Throws(Exception::class)
+    fun replaceDocument(value: String)
+}
+
 /** Swift entry point. Lifetime is the app, with a host-selected Library/Caches directory and Keychain vault. */
 class AppleFoundation(cacheDirectory: String, vault: AddonVault) {
+    constructor(cacheDirectory: String, keychain: AppleAddonStorage) : this(cacheDirectory, object : AddonVault {
+        override fun read(): String = keychain.readDocument()
+        override fun replace(value: String) = keychain.replaceDocument(value)
+    })
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private fun client(timing: Boolean = false) = HttpClient(Darwin) {
         expectSuccess = false
@@ -36,6 +49,7 @@ class AppleFoundation(cacheDirectory: String, vault: AddonVault) {
     private val timingHttp = client(timing = true)
     private val addonHttp = client()
     val sports = SharedSports(sportsHttp, SportsFile(cacheDirectory), KtorF1Transport(timingHttp))
+    val nhlDiscovery = com.alexdiab.stadiatv.sports.AppleNhlDiscovery(sports.nhl, scope)
     val sportsBridge = SportsBridge(sports.sports,scope)
     val espnFantasy = EspnFantasyApi(sportsHttp)
     val sleeperFantasy = SleeperFantasyApi(sportsHttp)

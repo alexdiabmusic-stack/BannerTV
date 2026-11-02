@@ -133,7 +133,9 @@ struct EnginePlumbingTests {
 }
 
 /// The whole engine, in real time, against providers that misbehave the way IPTV panels do.
-@Suite("Engine end to end", .timeLimit(.minutes(1)))
+// These cases simulate real-time playback and network outages using loopback servers.
+// Keep them from competing with each other for scheduling time on small CI runners.
+@Suite("Engine end to end", .serialized, .timeLimit(.minutes(1)))
 struct EngineEndToEndTests {
     @Test("A provider cut mid-packet is bridged from the reserve: no freeze, nothing missed or repeated")
     func transportStreamCut() async throws {

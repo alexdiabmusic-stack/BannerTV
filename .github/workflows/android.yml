@@ -1,0 +1,49 @@
+name: Android and shared contracts
+on:
+  pull_request:
+    paths: &inputs
+      - 'app/**'
+      - 'core/**'
+      - 'mobile/**'
+      - 'shared/**'
+      - 'contracts/**'
+      - 'apple/NHLCoreTests/**'
+      - 'gradle/**'
+      - 'gradlew*'
+      - '*.gradle.kts'
+      - 'gradle.properties'
+      - 'scripts/bootstrap-public-sports.py'
+      - '.github/workflows/android.yml'
+  push:
+    branches: [main]
+    paths: *inputs
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.ref }}
+  # Apple-side review fixes also update the PR head. Let an active Android regression report its result.
+  cancel-in-progress: false
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Ensure required Android SDK packages
+        run: |
+          if [[ ! -f "$ANDROID_HOME/platforms/android-36/android.jar" || ! -x "$ANDROID_HOME/build-tools/36.0.0/aapt2" ]]; then
+            JAVA_HOME="${JAVA_HOME_21_X64:-$JAVA_HOME}" "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+          fi
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+      - run: python3 scripts/bootstrap-public-sports.py
+      - run: >-
+          ./gradlew :shared:compileCommonMainKotlinMetadata :shared:jvmTest
+          :core:testDebugUnitTest :mobile:testDebugUnitTest :app:testDebugUnitTest
+          :mobile:assembleDebug :app:assembleDebug -PpublicBuild=true

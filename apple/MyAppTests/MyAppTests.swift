@@ -42,6 +42,14 @@ private func match(
     )
 }
 
+// Exercise the same event, stream and result adapters as MatchLinkService.
+private func rankedSources(match: Match, channels: [Channel]) -> [RankedSource] {
+    let linker = StreamLinker(streams: channels.map(StreamLinkerAdapters.stream), programmes: [])
+    let families = linker.link(StreamLinkerAdapters.event(match)).groupedByFamily()
+    let byID = Dictionary(uniqueKeysWithValues: channels.map { (StreamLinkerAdapters.streamID($0), $0) })
+    return StreamLinkerAdapters.rankedSources(for: families, channelByID: byID)
+}
+
 private var nbaLeague: League { League.all.first { $0.path == "basketball/nba" }! }
 private var eplLeague: League { League.all.first { $0.path == "soccer/eng.1" }! }
 
@@ -57,7 +65,7 @@ struct SourceMatcherRegressionTests {
         let nba = nbaLeague
         let m = match(league: nba, home: "Los Angeles Lakers", homeAbbr: "LAL",
                       away: "Los Angeles Clippers", awayAbbr: "LAC")
-        let result = SourceMatcher.rank(match: m, channels: [
+        let result = rankedSources(match: m, channels: [
             channel(name: "ABC Los Angeles")
         ])
         // "Los Angeles" is shared — must not produce a both-teams teamNameMatch.
@@ -72,7 +80,7 @@ struct SourceMatcherRegressionTests {
         let nba = nbaLeague
         let m = match(league: nba, home: "Los Angeles Lakers", homeAbbr: "LAL",
                       away: "Los Angeles Clippers", awayAbbr: "LAC")
-        let result = SourceMatcher.rank(match: m, channels: [
+        let result = rankedSources(match: m, channels: [
             channel(name: "Lakers vs Clippers Live")
         ])
         // Both distinct tokens (Lakers, Clippers) appear → must confirm via teamNameMatch.
@@ -87,7 +95,7 @@ struct SourceMatcherRegressionTests {
         let nba = nbaLeague
         let m = match(league: nba, home: "Lakers", homeAbbr: "LAL",
                       away: "Celtics", awayAbbr: "BOS", broadcasts: ["ESPN+"])
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             channel(name: "ESPN HD")
         ])
         let espnChannel = ranked.first(where: { $0.channel.name == "ESPN HD" })
@@ -102,7 +110,7 @@ struct SourceMatcherRegressionTests {
         let nba = nbaLeague
         let m = match(league: nba, home: "Lakers", homeAbbr: "LAL",
                       away: "Celtics", awayAbbr: "BOS", broadcasts: ["ESPN+"])
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             channel(name: "ESPN+ HD")
         ])
         let espnPlusChannel = ranked.first(where: { $0.channel.name == "ESPN+ HD" })
@@ -161,7 +169,7 @@ struct SourceMatcherRegressionTests {
         let nba = nbaLeague
         let m = match(league: nba, home: "Lakers", homeAbbr: "LAL",
                       away: "Celtics", awayAbbr: "BOS", broadcasts: ["TNT"])
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             channel(name: "TNT HD")
         ])
         let confirmed = ranked.filter(\.isConfirmed)
@@ -178,7 +186,7 @@ struct SourceMatcherRegressionTests {
         let nba = nbaLeague
         let m = match(league: nba, home: "Lakers", homeAbbr: "LAL",
                       away: "Celtics", awayAbbr: "BOS", broadcasts: ["ESPN"])
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             channel(name: "ESPN News")
         ])
         #expect(ranked.isEmpty, "ESPN News must be excluded by the nonSportsNameTokens filter")
@@ -189,7 +197,7 @@ struct SourceMatcherRegressionTests {
         let epl = eplLeague
         let m = match(league: epl, home: "Arsenal", homeAbbr: "ARS",
                       away: "Chelsea", awayAbbr: "CHE")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             channel(name: "Sky Weather")
         ])
         #expect(ranked.isEmpty, "Weather channel must be excluded by the nonSportsNameTokens filter")
@@ -200,7 +208,7 @@ struct SourceMatcherRegressionTests {
         let epl = eplLeague
         let m = match(league: epl, home: "Arsenal", homeAbbr: "ARS",
                       away: "Chelsea", awayAbbr: "CHE")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             channel(name: "Food Network Cooking")
         ])
         #expect(ranked.isEmpty, "Cooking channel must be excluded by the nonSportsNameTokens filter")
@@ -221,7 +229,7 @@ struct SourceMatcherRegressionTests {
         let epl = eplLeague
         let m = match(league: epl, home: "Arsenal", homeAbbr: "ARS",
                       away: "Chelsea", awayAbbr: "CHE")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             channel(name: "Sky Sports Premier League")
         ])
         if let source = ranked.first {
@@ -275,11 +283,9 @@ struct SourceMatcherRegressionTests {
 @Suite("News pagination regressions")
 struct NewsPaginationTests {
 
-    @Test("Yahoo — supportsPagination is false")
-    func yahooDoesNotSupportPagination() {
-        let yahoo = YahooSportsProvider()
-        #expect(!yahoo.supportsPagination,
-                "YahooSportsProvider must declare supportsPagination = false so page-2+ requests skip it")
+    @Test("Registered RSS provider does not request subsequent pages")
+    func rssProviderDoesNotSupportPagination() {
+        #expect(!BBCSportNewsProvider().supportsPagination)
     }
 
     @Test("Default supportsPagination — protocol extension defaults to true")
@@ -325,12 +331,13 @@ private func pMatch(
     awayAbbr: String,
     broadcasts: [String] = [],
     name: String = "",
-    shortName: String = ""
+    shortName: String = "",
+    date: Date = Date()
 ) -> Match {
     Match(
         id: id,
         league: league,
-        date: Date(),
+        date: date,
         name: name.isEmpty ? "\(away) at \(home)" : name,
         shortName: shortName.isEmpty ? "\(awayAbbr) @ \(homeAbbr)" : shortName,
         state: .live,
@@ -344,10 +351,10 @@ private func pMatch(
     )
 }
 
-private var eredivisieLeague: League { League.all.first { $0.path == "soccer/ned.1" }! }
+private var eredivisieLeague: League { League(name: "Eredivisie", shortName: "ERE", path: "soccer/ned.1", group: .soccer) }
 private var mlbLeague: League { League.all.first { $0.path == "baseball/mlb" }! }
 private var f1League: League { League.all.first { $0.path == "racing/f1" }! }
-private var ncaafLeague: League { League.all.first { $0.path == "football/college-football" }! }
+private var ncaafLeague: League { League(name: "College football", shortName: "NCAAF", path: "football/college-football", group: .football) }
 private var nhlLeague: League { League.all.first { $0.path == "hockey/nhl" }! }
 private var eplLeagueP: League { League.all.first { $0.path == "soccer/eng.1" }! }
 
@@ -363,7 +370,7 @@ struct PrecisionStreamMatcherTests {
         let m = pMatch(league: eredivisieLeague,
                        home: "PSV", homeAbbr: "PSV",
                        away: "Sparta Rotterdam", awayAbbr: "SPA")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "CBS 7 Spartanburg")
         ])
         // "sparta" (6 chars) previously matched "spartanburg" via haystack.contains(token).
@@ -378,7 +385,7 @@ struct PrecisionStreamMatcherTests {
         let m = pMatch(league: eredivisieLeague,
                        home: "PSV", homeAbbr: "PSV",
                        away: "Sparta Rotterdam", awayAbbr: "SPA")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "Isparta Sports")
         ])
         let hasTeamMatch = ranked.first?.evidenceCategories.contains(.teamNameMatch) ?? false
@@ -392,7 +399,7 @@ struct PrecisionStreamMatcherTests {
                        home: "PSV", homeAbbr: "PSV",
                        away: "Sparta Rotterdam", awayAbbr: "SPA")
         // A channel explicitly naming both teams should still confirm.
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "PSV vs Sparta Rotterdam Live")
         ])
         #expect(ranked.first?.evidenceCategories.contains(.teamNameMatch) == true,
@@ -406,7 +413,7 @@ struct PrecisionStreamMatcherTests {
         let m = pMatch(league: mlbLeague,
                        home: "New York Yankees", homeAbbr: "NYY",
                        away: "San Diego Padres", awayAbbr: "SDP")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "NBA: San Antonio @ New York")
         ])
         // Feed family: channel = .nba, event = .mlb → incompatible → hard reject.
@@ -420,7 +427,7 @@ struct PrecisionStreamMatcherTests {
         let m = pMatch(league: nba,
                        home: "Boston Celtics", homeAbbr: "BOS",
                        away: "Miami Heat", awayAbbr: "MIA")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "NHL Network HD")
         ])
         #expect(ranked.isEmpty,
@@ -432,7 +439,7 @@ struct PrecisionStreamMatcherTests {
         let m = pMatch(league: nhlLeague,
                        home: "Toronto Maple Leafs", homeAbbr: "TOR",
                        away: "Ottawa Senators", awayAbbr: "OTT")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "AHL TV Live")
         ])
         // AHL and NHL are in the same sport group but explicitly incompatible competition levels.
@@ -446,7 +453,7 @@ struct PrecisionStreamMatcherTests {
                        home: "New York Yankees", homeAbbr: "NYY",
                        away: "San Diego Padres", awayAbbr: "SDP",
                        broadcasts: ["ESPN"])
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "ESPN HD", group: "Sports")
         ])
         // Generic "ESPN HD" has unknown feed family → not rejected by incompatibility check.
@@ -463,7 +470,7 @@ struct PrecisionStreamMatcherTests {
                        away: "Charles Leclerc", awayAbbr: "LEC",
                        name: "Formula 1 Italian Grand Prix Race",
                        shortName: "F1 Italian GP Race")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "F1 Italian GP Qualifying")
         ])
         // eventSession=.race, channelSession=.qualifying → hard reject (HC-010).
@@ -478,7 +485,7 @@ struct PrecisionStreamMatcherTests {
                        away: "Charles Leclerc", awayAbbr: "LEC",
                        name: "Formula 1 Italian Grand Prix Race",
                        shortName: "F1 Italian GP Race")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "Sky Sports F1 Race")
         ])
         // channelSession=.race matches eventSession=.race → no session conflict.
@@ -493,7 +500,7 @@ struct PrecisionStreamMatcherTests {
                        away: "Charles Leclerc", awayAbbr: "LEC",
                        name: "Formula 1 Italian Grand Prix Race",
                        shortName: "F1 Italian GP Race")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "F1 Italian GP FP1 Practice")
         ])
         #expect(ranked.isEmpty,
@@ -508,7 +515,7 @@ struct PrecisionStreamMatcherTests {
                        name: "Formula 1 Italian Grand Prix Race",
                        shortName: "F1 Italian GP Race")
         // A generic F1 channel with no session keyword should not be rejected.
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "Sky Sports F1 HD")
         ])
         #expect(!ranked.isEmpty,
@@ -522,7 +529,7 @@ struct PrecisionStreamMatcherTests {
         let m = pMatch(league: eplLeagueP,
                        home: "Manchester City", homeShort: "Man City", homeAbbr: "MCI",
                        away: "Manchester United", awayShort: "Man Utd", awayAbbr: "MUN")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "Manchester City TV")
         ])
         // "city" is no longer a stop word, so distinctHome = ["city"] after removing shared "manchester".
@@ -538,7 +545,7 @@ struct PrecisionStreamMatcherTests {
         let m = pMatch(league: eplLeagueP,
                        home: "Manchester City", homeShort: "Man City", homeAbbr: "MCI",
                        away: "Manchester United", awayShort: "Man Utd", awayAbbr: "MUN")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "Manchester United Live")
         ])
         if let source = ranked.first {
@@ -552,7 +559,7 @@ struct PrecisionStreamMatcherTests {
         let m = pMatch(league: eplLeagueP,
                        home: "Manchester City", homeShort: "Man City", homeAbbr: "MCI",
                        away: "Manchester United", awayShort: "Man Utd", awayAbbr: "MUN")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "Manchester City vs Manchester United Live")
         ])
         #expect(ranked.first?.evidenceCategories.contains(.teamNameMatch) == true,
@@ -566,7 +573,7 @@ struct PrecisionStreamMatcherTests {
         let m = pMatch(league: ncaafLeague,
                        home: "Alabama Crimson Tide", homeAbbr: "ALA",
                        away: "Georgia Bulldogs", awayAbbr: "UGA")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "NCAAF 37")
         ])
         // The slot may surface as a candidate via league keywords but must not be confirmed.
@@ -584,7 +591,7 @@ struct PrecisionStreamMatcherTests {
         let m = pMatch(league: nba,
                        home: "Los Angeles Lakers", homeAbbr: "LAL",
                        away: "Boston Celtics", awayAbbr: "BOS")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "NBA 14")
         ])
         if let source = ranked.first {
@@ -637,76 +644,42 @@ struct PrecisionStreamMatcherTests {
                 "Context id (match+channel) must be stable regardless of requestGenerationID")
     }
 
-    // MARK: SportsOntology unit tests
-
-    @Test("SportsOntology: NBA feed family classified from channel name")
-    func feedFamilyNBAFromChannelName() {
-        #expect(SportsOntology.classifyFeedFamily(from: "NBA: San Antonio @ New York") == .nba)
+    // The current engine exposes ranked feeds. Exercise the old league and slot
+    // requirements against that public result instead of recreating the retired classifier.
+    @Test("Timed event slots stay in the correct league")
+    func leagueSpecificSlots() {
+        let cases: [(league: League, home: String, away: String, valid: String, invalid: [String])] = [
+            (mlbLeague, "Atlanta Braves", "Philadelphia Phillies", "MLB", ["NBA"]),
+            (nhlLeague, "Florida Panthers", "Edmonton Oilers", "NHL", ["AHL"]),
+            (nbaLeague, "Los Angeles Lakers", "Los Angeles Clippers", "NBA", ["WNBA"]),
+            (League.all.first { $0.path == "basketball/wnba" }!, "New York Liberty", "Seattle Storm", "WNBA", ["NBA"]),
+            (League.all.first { $0.path == "football/nfl" }!, "Buffalo Bills", "Miami Dolphins", "NFL", ["NCAAF", "CFL"]),
+        ]
+        for row in cases {
+            let game = pMatch(league: row.league, home: row.home, homeAbbr: "HME", away: row.away,
+                              awayAbbr: "AWY", date: Date(timeIntervalSince1970: 1719273600))
+            func feeds(_ label: String) -> [RankedSource] {
+                rankedSources(match: game, channels: [
+                    pChannel(name: "US ★ \(label) 01: \(row.away) @ \(row.home) 8:00 PM ET", group: label)
+                ])
+            }
+            #expect(feeds(row.valid).contains(where: { $0.isConfirmed }), "Matching league slot: \(row.valid)")
+            for other in row.invalid {
+                #expect(feeds(other).isEmpty, "Wrong league slot: \(other) for \(row.league.shortName)")
+            }
+        }
     }
 
-    @Test("SportsOntology: WNBA not misclassified as NBA")
-    func feedFamilyWNBANotNBA() {
-        #expect(SportsOntology.classifyFeedFamily(from: "WNBA Game of the Week") == .wnba)
-    }
-
-    @Test("SportsOntology: AHL classified from channel name")
-    func feedFamilyAHLFromChannelName() {
-        #expect(SportsOntology.classifyFeedFamily(from: "AHL Hockey Live") == .ahl)
-    }
-
-    @Test("SportsOntology: generic ESPN unknown feed family")
-    func feedFamilyESPNIsUnknown() {
-        #expect(SportsOntology.classifyFeedFamily(from: "ESPN HD") == .unknown)
-    }
-
-    @Test("SportsOntology: NBA incompatible with MLB")
-    func nbaIncompatibleWithMLB() {
-        #expect(SportsOntology.isIncompatible(candidate: .nba, with: .mlb))
-    }
-
-    @Test("SportsOntology: AHL incompatible with NHL")
-    func ahlIncompatibleWithNHL() {
-        #expect(SportsOntology.isIncompatible(candidate: .ahl, with: .nhl))
-    }
-
-    @Test("SportsOntology: WNBA incompatible with NBA (within-group sub-league)")
-    func wnbaIncompatibleWithNBA() {
-        #expect(SportsOntology.isIncompatible(candidate: .wnba, with: .nba))
-    }
-
-    @Test("SportsOntology: NCAAF incompatible with NFL (within-group sub-league)")
-    func ncaafIncompatibleWithNFL() {
-        #expect(SportsOntology.isIncompatible(candidate: .ncaaf, with: .nfl))
-    }
-
-    @Test("SportsOntology: CFL incompatible with NFL (within-group sub-league)")
-    func cflIncompatibleWithNFL() {
-        #expect(SportsOntology.isIncompatible(candidate: .cfl, with: .nfl))
-    }
-
-    @Test("SportsOntology: same family not incompatible")
-    func sameFamilyNotIncompatible() {
-        #expect(!SportsOntology.isIncompatible(candidate: .nhl, with: .nhl))
-    }
-
-    @Test("SportsOntology: unknown candidate never incompatible")
-    func unknownCandidateNeverIncompatible() {
-        #expect(!SportsOntology.isIncompatible(candidate: .unknown, with: .nba))
-    }
-
-    @Test("SportsOntology: numbered slot detected — NCAAF 37")
-    func numberedSlotNCAAF37() {
-        #expect(SportsOntology.isNumberedEventSlot("NCAAF 37"))
-    }
-
-    @Test("SportsOntology: numbered slot detected — NHL GAME 07")
-    func numberedSlotNHLGame07() {
-        #expect(SportsOntology.isNumberedEventSlot("NHL GAME 07"))
-    }
-
-    @Test("SportsOntology: named channel not flagged as numbered slot")
-    func namedChannelNotNumberedSlot() {
-        #expect(!SportsOntology.isNumberedEventSlot("Sky Sports Premier League"))
+    @Test("Bare numbered slots need evidence, while a named broadcaster can be a candidate")
+    func bareSlotsAndNamedBroadcasters() {
+        let game = pMatch(league: eplLeagueP, home: "Arsenal", homeAbbr: "ARS",
+                          away: "Chelsea", awayAbbr: "CHE", broadcasts: ["Sky Sports Premier League"])
+        let sources = rankedSources(match: game, channels: [
+            pChannel(id: "college", name: "NCAAF 37"), pChannel(id: "hockey", name: "NHL GAME 07"),
+            pChannel(id: "sky", name: "UK ★ SKY SPORTS PREMIER LEAGUE")
+        ])
+        #expect(!sources.contains { ["college", "hockey"].contains($0.channel.id) && $0.isConfirmed })
+        #expect(sources.contains { $0.channel.id == "sky" && $0.evidenceCategories.contains(.broadcastRightsMatch) })
     }
 
     // MARK: HC-002: Sub-league hard reject — within-group competition conflicts
@@ -717,7 +690,7 @@ struct PrecisionStreamMatcherTests {
         let m = pMatch(league: nba,
                        home: "Boston Celtics", homeAbbr: "BOS",
                        away: "Miami Heat", awayAbbr: "MIA")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "WNBA TV Live")
         ])
         #expect(ranked.isEmpty,
@@ -730,7 +703,7 @@ struct PrecisionStreamMatcherTests {
         let m = pMatch(league: nfl,
                        home: "Kansas City Chiefs", homeAbbr: "KC",
                        away: "Philadelphia Eagles", awayAbbr: "PHI")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "NCAAF 37")
         ])
         #expect(ranked.isEmpty,
@@ -743,7 +716,7 @@ struct PrecisionStreamMatcherTests {
         let m = pMatch(league: nfl,
                        home: "Kansas City Chiefs", homeAbbr: "KC",
                        away: "Philadelphia Eagles", awayAbbr: "PHI")
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "CFL Network")
         ])
         #expect(ranked.isEmpty,
@@ -759,7 +732,7 @@ struct PrecisionStreamMatcherTests {
                        home: "Los Angeles Lakers", homeAbbr: "LAL",
                        away: "Los Angeles Clippers", awayAbbr: "LAC",
                        broadcasts: ["ABC"])
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "ABC Los Angeles")
         ])
         if let source = ranked.first {
@@ -779,7 +752,7 @@ struct PrecisionStreamMatcherTests {
                        home: "Boston Celtics", homeAbbr: "BOS",
                        away: "Miami Heat", awayAbbr: "MIA",
                        broadcasts: ["NBC"])
-        let ranked = SourceMatcher.rank(match: m, channels: [
+        let ranked = rankedSources(match: m, channels: [
             pChannel(name: "NBC Sports")
         ])
         // "nbc" appears in match.broadcasts (+35) AND in the NBA rights store (+70).

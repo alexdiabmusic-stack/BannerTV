@@ -13,6 +13,10 @@ final class OnboardingStore {
 
     private let catalog = SportsCatalogRepository.shared
 
+    // SwiftUI discards transient stores as the view updates. Teardown only releases stored values.
+    // Explicit isolation avoids the back-deployed main-actor deinit crash (swiftlang/swift#88036).
+    nonisolated deinit {}
+
     // MARK: - Sport
 
     func isSportSelected(_ sport: CatalogSport) -> Bool {

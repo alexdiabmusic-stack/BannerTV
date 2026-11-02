@@ -33,7 +33,7 @@ extension AdaptiveLayoutContext {
     init(proxy: GeometryProxy) {
         size = proxy.size
         // Reserved regions arrived in iOS 27.1; earlier systems simply report none.
-        #if os(iOS)
+        #if os(iOS) && !BANNER_NO_RESERVED_REGIONS
         if #available(iOS 27.1, *) {
             divisions = proxy.reservedRegions(kind: .division).filter(\.isActive).map(\.frame)
             occlusions = proxy.reservedRegions(kind: .occlusion).filter(\.isActive).map(\.frame)

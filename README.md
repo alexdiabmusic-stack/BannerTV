@@ -1,25 +1,16 @@
-# BannerTV for Android
+# BannerTV
 
-The Android home of BannerTV, the sports and live TV app that also exists for iOS and tvOS. It contains the
-**Fire TV / Android TV** app (`:app`, package `com.alexdiab.stadiatv`) and the **Android phone** app
-(`:mobile`, package `com.alexdiab.stadiatv.mobile`), with Android adapters and playback in `:core`
-and portable sports/business logic in the Kotlin Multiplatform `:shared` module.
-The TV interface uses Compose for TV, remote focus and a fixed 1920x1080 canvas. The phone interface uses
-Compose Material 3, touch navigation, system insets, portrait/landscape playback and native picture-in-picture.
+BannerTV contains the shared Kotlin Multiplatform foundation, native Android phone and Fire TV apps, and the existing native Apple application. Open this directory in Android Studio or open `apple/Stadia TV.xcodeproj` in Xcode.
 
-The app does not provide or bundle television streams. You add a playlist you are authorised to use.
+Run `python3 scripts/bootstrap-public-sports.py` before the first build. The remaining development setup, supported targets and current rollout state are documented below.
 
-## Location in StadiaTV
+- [Architecture and import provenance](docs/ARCHITECTURE.md)
+- [Feature ownership and migration matrix](docs/MIGRATION_MATRIX.md)
+- [Platform validation and remaining gates](docs/PLATFORM_PARITY.md)
+- [Apple framework integration](docs/APPLE_KMP_INTEGRATION.md)
+- [Development and CI commands](docs/DEVELOPMENT_WORKFLOW.md)
 
-This app has its own section in [alexdiabmusic-stack/StadiaTV](https://github.com/alexdiabmusic-stack/StadiaTV/tree/main/Firestick-Android-TV),
-under `Firestick-Android-TV/`. Open that directory as the Android Studio project, or build from a repository checkout:
-
-```bash
-cd Firestick-Android-TV
-./gradlew :app:assembleDebug
-```
-
-The Gradle project is self-contained in this directory; the repository's older root-level app has its own build.
+The following sections describe the existing Android TV and phone applications.
 
 ## Repository layout
 

@@ -160,6 +160,9 @@ nonisolated struct F1RingBuffer<Element: Sendable>: Sendable {
     private var storage: [Element] = []
     private var cursor = 0
     let capacity: Int
+
+    init(capacity: Int) { self.capacity = capacity }
+
     mutating func append(_ value: Element) {
         guard capacity > 0 else { return }
         if storage.count < capacity { storage.append(value) }

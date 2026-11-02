@@ -61,7 +61,9 @@ class NativeHockeyProvider(
     }
 
     override suspend fun schedule(start: Long, days: Int): List<Match> {
-        val key = "${day(start)}:${days.coerceIn(1, 366)}"
+        val first = Dates.startOfDay(start)
+        val end = Dates.addDays(first, days.coerceIn(1, 366))
+        val key = "$first:$end"
         val ttl = if (days > 30) 300_000L else 120_000L
         val cached = scheduleLock.locked { schedules[key]?.takeIf { now() - it.at in 0 until ttl } }
         val loaded = cached?.games ?: try {
@@ -80,10 +82,8 @@ class NativeHockeyProvider(
             }
         } catch (_: TimeoutCancellationException) { throw IOException("NHL schedule timed out") }
         // A schedule cache may contain pregame/final states. Today's short-lived discovery owns live scores.
-        val end = Dates.addDays(Dates.startOfDay(start), days.coerceIn(1, 366))
-        return if (now() in Dates.startOfDay(start) until end) {
-            val live = scores(null)
-            (loaded.associateBy { it.key } + live.associateBy { it.key }).values.sortedBy { it.startMillis }
+        return if (now() in first until end) {
+            scheduleWindow(loaded + scores(null), start, days)
         } else loaded
     }
 
@@ -134,10 +134,21 @@ class NativeHockeyProvider(
             val id = raw["id"].stringOrNull()?.takeIf { it.matches(Regex("[0-9]{10}")) } ?: return null
             val start = Dates.parseIso(raw["startTimeUTC"].stringOrNull()) ?: return null
             val status = raw["gameScheduleState"].string()
-            val state = when {
-                status in setOf("PPD", "CNCL") -> GameState.PRE
-                raw["gameState"].string() in setOf("LIVE", "CRIT") -> GameState.LIVE
-                raw["gameState"].string() in setOf("OFF", "FINAL") -> GameState.FINAL
+            val phase = when (status) {
+                "PPD" -> "postponed"
+                "CNCL" -> "cancelled"
+                else -> when (raw["gameState"].string()) {
+                    "LIVE", "CRIT" -> "live"
+                    "OFF", "FINAL" -> "final"
+                    "SUSP" -> "suspended"
+                    "FUT" -> "scheduled"
+                    "PRE" -> "pregame"
+                    else -> "unknown"
+                }
+            }
+            val state = when (phase) {
+                "live" -> GameState.LIVE
+                "final" -> GameState.FINAL
                 else -> GameState.PRE
             }
             val aScore = raw["awayTeam"]["score"].stringOrNull()?.toIntOrNull()
@@ -155,19 +166,40 @@ class NativeHockeyProvider(
             val clock = raw["clock"]["timeRemaining"].stringOrNull()
             val intermission = raw["clock"]["inIntermission"].bool()
             val label = when {
-                status == "PPD" -> "Postponed"; status == "CNCL" -> "Cancelled"; raw["gameState"].string() == "SUSP" -> "Suspended"
+                phase == "postponed" -> "Postponed"
+                phase == "cancelled" -> "Cancelled"
+                phase == "suspended" -> "Suspended"
                 state == GameState.FINAL -> "Final${extra?.let { " · $it" } ?: ""}"
                 intermission && state == GameState.LIVE -> "Intermission · $period"
                 state == GameState.LIVE -> listOfNotNull(clock, period.takeIf(String::isNotBlank)).joinToString(" · ")
+                phase == "unknown" -> "Status unavailable"
                 else -> Dates.kickoff(start)
             }
+            val timing = GameTiming(
+                clock.takeUnless { intermission },
+                raw["clock"]["secondsRemaining"].stringOrNull()?.toIntOrNull()?.takeUnless { intermission },
+                raw["clock"]["running"].bool() && !intermission,
+                raw["periodDescriptor"]["number"].stringOrNull()?.toIntOrNull(),
+                period, phase, intermission, extra != null,
+            )
             return Match("nhl:$id", nhl, start, "${away.displayName} at ${home.displayName}", "${away.abbreviation} @ ${home.abbreviation}", state, label, home, away,
                 broadcasts = raw["tvBroadcasts"].array.mapNotNull { it["network"].stringOrNull() }.distinct(), venue = local(raw["venue"]).takeIf(String::isNotBlank),
-                live = if (state == GameState.LIVE) LiveContext(clock.takeUnless { intermission }, raw["periodDescriptor"]["number"].stringOrNull()) else LiveContext.EMPTY,
+                live = if (state == GameState.LIVE) LiveContext(timing.clock, timing.period?.toString(), timing = timing) else LiveContext(timing = timing),
                 nativeReference = NativeGameReference("NHL", id, raw["season"].stringOrNull()?.toIntOrNull()))
         }
 
-        fun scheduleDays(start: Long, days: Int): List<String> = (0 until days.coerceIn(1, 366) step 7).map { day(Dates.addDays(start, it)) }.distinct()
+        fun scheduleDays(start: Long, days: Int): List<String> {
+            val first = Dates.startOfDay(start)
+            val lastProviderDay = day(Dates.addDays(first, days.coerceIn(1, 366)) - 1)
+            // Requests cover seven Eastern dates. A viewer's seven local days can span eight of them.
+            return buildList {
+                var cursor = first
+                while (day(cursor) <= lastProviderDay) {
+                    add(day(cursor))
+                    cursor = Dates.addLocalDays(cursor, 7, "America/New_York")
+                }
+            }
+        }
         fun scheduleWindow(games: List<Match>, start: Long, days: Int): List<Match> {
             val first = Dates.startOfDay(start); val end = Dates.addDays(first, days.coerceIn(1, 366))
             return games.filter { it.startMillis in first until end }.associateBy { it.key }.values.sortedBy { it.startMillis }

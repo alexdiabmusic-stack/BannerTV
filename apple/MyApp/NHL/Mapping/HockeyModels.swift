@@ -114,9 +114,16 @@ nonisolated struct HockeyGame: Codable, Equatable, Identifiable, Sendable {
     let venue: String?
     let gameCenterURL: URL?
     var statusLabel: String {
-        if status == .final { return "FINAL" + (period.kind == .overtime || period.kind == .shootout ? " · " + period.label : "") }
-        if status == .live { return (intermission ? "INTERMISSION" : "LIVE") + " · " + period.label }
-        switch status {
+        status.nhlLabel(start: start, period: period.label, extraPeriod: period.kind == .overtime || period.kind == .shootout,
+                        intermission: intermission)
+    }
+}
+
+nonisolated extension BannerGameStatus {
+    func nhlLabel(start: Date, period: String, extraPeriod: Bool, intermission: Bool) -> String {
+        switch self {
+        case .final: return "FINAL" + (extraPeriod ? " · " + period : "")
+        case .live: return (intermission ? "INTERMISSION" : "LIVE") + " · " + period
         case .postponed: return "Postponed"
         case .suspended: return "Suspended"
         case .cancelled: return "Cancelled"

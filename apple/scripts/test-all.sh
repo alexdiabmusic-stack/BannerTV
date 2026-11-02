@@ -33,6 +33,17 @@ run_checks() {
 }
 
 run_packages() {
+  # Standalone Swift packages do not have the app bundle's Info.plist.
+  if [[ -f Config/ProviderDefaults.xcconfig ]]; then
+    while read -r setting equals value; do
+      case "$setting" in
+        NFL_WEB_CLIENT_KEY|NFL_WEB_CLIENT_SECRET|PGA_WEB_API_KEY)
+          [[ "$equals" == "=" ]] || return 1
+          export "$setting=$value"
+          ;;
+      esac
+    done < Config/ProviderDefaults.xcconfig
+  fi
   local dir
   for dir in *CoreTests; do
     [ -f "$dir/run-tests.sh" ] || continue

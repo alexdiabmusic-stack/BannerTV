@@ -28,7 +28,7 @@ val generateProviderDefaults by tasks.registering {
 kotlin {
     // The library contains no Android SDK code. Both Android apps consume its JVM artifact.
     jvm { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }
-    listOf(iosArm64(), iosSimulatorArm64()).forEach { target ->
+    listOf(iosArm64(), iosSimulatorArm64(), tvosArm64(), tvosSimulatorArm64(), macosArm64()).forEach { target ->
         target.binaries.framework { baseName = "BannerFoundation"; isStatic = true }
     }
     sourceSets {
@@ -48,11 +48,21 @@ kotlin {
         }
         jvmTest {
             resources.srcDir("../core/src/test/resources")
+            resources.srcDir("../contracts")
             dependencies {
                 implementation("junit:junit:4.13.2")
                 implementation("io.ktor:ktor-client-mock:3.6.1")
             }
         }
-        iosMain.dependencies { implementation("io.ktor:ktor-client-darwin:3.6.1") }
+        appleMain.dependencies { implementation("io.ktor:ktor-client-darwin:3.6.1") }
+    }
+}
+
+// Enable the public historical-score probe explicitly. Regular CI uses checked-in fixtures.
+tasks.named<Test>("jvmTest") {
+    providers.gradleProperty("nhlLiveOutput").orNull?.let { path ->
+        systemProperty("banner.nhl.liveOutput", path)
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
     }
 }

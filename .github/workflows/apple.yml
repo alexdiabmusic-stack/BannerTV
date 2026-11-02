@@ -1,0 +1,75 @@
+name: Apple and shared contracts
+on:
+  pull_request:
+    paths: &inputs
+      - 'apple/**'
+      - 'shared/**'
+      - 'contracts/**'
+      - 'scripts/**'
+      - 'gradle/**'
+      - 'gradlew*'
+      - '*.gradle.kts'
+      - 'gradle.properties'
+      - '.github/workflows/apple.yml'
+  push:
+    branches: [main]
+    paths: *inputs
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: apple-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  native-fixtures:
+    runs-on: macos-26
+    timeout-minutes: 55
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/bootstrap-public-sports.py
+      - run: bash apple/scripts/test-all.sh checks
+      - run: bash apple/scripts/test-all.sh packages
+  apple-integration:
+    runs-on: macos-26
+    timeout-minutes: 100
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+      - run: python3 scripts/bootstrap-public-sports.py
+      - run: |
+          xcodebuild -version
+          scripts/check-nhl-contract.sh
+      - name: Build original native route, then test shared route and real NHL request
+        id: discovery
+        run: BANNER_XCODE_SCRATCH="$RUNNER_TEMP/banner-xcode" apple/scripts/verify-foundation.sh discovery
+      - name: Report the faulting simulator stack if discovery fails
+        if: ${{ failure() && steps.discovery.outcome == 'failure' }}
+        run: |
+          scratch="$RUNNER_TEMP/banner-xcode"
+          for result in "$scratch"/live-*.xcresult; do
+            [[ -d "$result" ]] || continue
+            xcrun xcresulttool export diagnostics --path "$result" --output-path "$scratch/diagnostics/$(basename "$result")" || true
+          done
+          python3 apple/scripts/report-simulator-crash.py "$scratch"
+      - name: Build Apple frameworks and run simulator contracts
+        run: >-
+          ./gradlew :shared:iosSimulatorArm64Test :shared:linkDebugFrameworkIosArm64
+          :shared:linkDebugFrameworkIosSimulatorArm64 :shared:linkDebugFrameworkMacosArm64
+          :shared:linkDebugFrameworkTvosArm64 :shared:linkDebugFrameworkTvosSimulatorArm64
+          -PpublicBuild=true
+      - name: Run original MyApp unit test scheme
+        if: ${{ !cancelled() && steps.discovery.outcome == 'success' }}
+        run: BANNER_XCODE_SCRATCH="$RUNNER_TEMP/banner-xcode" apple/scripts/verify-foundation.sh app-tests
+      - name: Run auxiliary Apple regressions
+        if: ${{ !cancelled() && steps.discovery.outcome == 'success' }}
+        run: BANNER_XCODE_SCRATCH="$RUNNER_TEMP/banner-xcode" apple/scripts/verify-foundation.sh auxiliary-tests
