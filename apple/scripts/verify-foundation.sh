@@ -1,19 +1,24 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-# Ask Xcode for a destination the scheme supports on its selected SDK.
-list=$(xcodebuild -showdestinations -project 'Stadia TV.xcodeproj' -scheme MyApp)
-destination=$(python3 -c 'import sys,re
-for line in sys.stdin:
-    match=re.search(r"id:([0-9a-fA-F-]{36}),",line)
-    if "platform:iOS Simulator" in line and "name:iPhone" in line and match:
-        print(match[1]);break
-else: raise SystemExit("An available iPhone simulator is required")' <<< "$list")
 if [[ -n "${BANNER_XCODE_SCRATCH:-}" ]]; then
     scratch=$BANNER_XCODE_SCRATCH
     mkdir -p "$scratch"
 else
     scratch=$(mktemp -d "${TMPDIR:-/tmp}/banner-xcode.XXXXXX")
+fi
+# Framework tests can temporarily change the active simulator. Reuse the app's original device.
+if [[ -s "$scratch/destination" ]]; then
+    read -r destination < "$scratch/destination"
+else
+    list=$(xcodebuild -showdestinations -project 'Stadia TV.xcodeproj' -scheme MyApp)
+    destination=$(python3 -c 'import sys,re
+for line in sys.stdin:
+    match=re.search(r"id:([0-9a-fA-F-]{36}),",line)
+    if "platform:iOS Simulator" in line and "name:iPhone" in line and match:
+        print(match[1]);break
+else: raise SystemExit("An available iPhone simulator is required")' <<< "$list")
+    printf '%s\n' "$destination" > "$scratch/destination"
 fi
 common=(-project 'Stadia TV.xcodeproj' -configuration Debug -destination "id=$destination" CODE_SIGNING_ALLOWED=NO)
 verify_discovery() {
