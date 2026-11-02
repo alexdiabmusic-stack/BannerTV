@@ -2,7 +2,7 @@
 
 For the unified repository and current Apple rollout, see [Apple integration](../docs/APPLE_KMP_INTEGRATION.md) and [platform validation](../docs/PLATFORM_PARITY.md). The original foundation verification records describe the pre-consolidation baseline.
 
-This module owns portable business logic and provider clients. Android phone and Fire TV consume its JVM artifact through `core`. iOS targets produce `BannerFoundation`; host linking and device verification are not complete yet. The existing native UIs and players remain platform code.
+This module owns portable business logic and provider clients. Android phone and Fire TV consume its JVM artifact through `core`. The ARM64 Apple targets produce `BannerFoundation`. The enabled native iPhone app uses it for NHL scores and schedules. Device rollout remains gated. The existing native UIs and players remain platform code.
 
 See [the detailed foundation breakdown](FOUNDATION_OVERVIEW.md) for feature ownership, the cinematic movie flow, credential provisioning and remaining integration work.
 
@@ -55,7 +55,7 @@ Users connect an existing, preconfigured HTTPS Stremio manifest URL. They do not
 
 `AddonLibrary` validates the remote manifest before committing an add/edit; supports enable, disable, remove and connection checks; preserves configured path/query components; and opens the existing configuration interface. Catalog, metadata, stream and subtitle requests are checked against manifest capabilities. Direct HTTPS streams and request headers are supported. Torrent-only, external-player-only, response-rewriting and non-HTTPS resources are not represented as playable streams.
 
-Android has a Movies & Shows entry under Discover. Configuration is encrypted with Android Keystore AES-GCM in `noBackupFilesDir`, independently of ordinary settings and cloud backup. The Apple Keychain adapter is supplied under `apple/` but has not been linked/tested in Xcode. Errors must not contain configured URLs or credentials. No hosted AIOStreams service, accounts backend or deployment was created.
+Android has a Movies & Shows entry under Discover. Configuration is encrypted with Android Keystore AES-GCM in `noBackupFilesDir`, independently of ordinary settings and cloud backup. The Apple app builds its device-only Keychain adapter from `apple/MyApp/Foundation/KeychainAddonVault.swift`. Add-on management and device Keychain behavior still need end-to-end verification. Errors must not contain configured URLs or credentials. No hosted AIOStreams service, accounts backend or deployment was created.
 
 The AIOStreams source was studied for route/resource compatibility; server implementation was not copied into the app. The integration is a Stremio protocol client so another compatible provider can be added without an AIOStreams-specific service layer.
 
@@ -80,7 +80,7 @@ Run from the repository root, with the existing JDK and Android SDK configured:
 ./gradlew --no-watch-fs :mobile:assembleDebug :app:assembleDebug --max-workers=1 --no-parallel -PpublicBuild=true
 ```
 
-The shared JVM suite includes existing iOS-derived sports fixtures and new add-on, time, metadata, HTTP and CFL tests. Common tests can also run on the Apple target after installing Xcode. Device/emulator QA is deferred per the user's instruction. See `apple/README.md` for the native integration gate; common metadata compilation alone cannot establish iOS runtime parity.
+The shared JVM suite includes existing iOS-derived sports fixtures and new add-on, time, metadata, HTTP and CFL tests. The Apple workflow runs common tests on the ARM64 iOS simulator. See [Apple integration](../docs/APPLE_KMP_INTEGRATION.md) for the native app and live provider checks. Physical-device QA remains open.
 
 ## Reference baseline
 

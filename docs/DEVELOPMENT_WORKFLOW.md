@@ -28,7 +28,7 @@ Use the platform and runner details in [Apple integration](APPLE_KMP_INTEGRATION
 
 ## Pull requests and CI
 
-Use small changes that identify the current owner, affected platform contracts, tests executed, fallback behavior and remaining gates. The Android workflow runs shared and Android tests and both assemblies. The Apple workflow runs package fixtures, native framework builds, the native application baseline, the enabled application tests and the explicit real NHL integration test. Both workflows support manual dispatch. Shared, Gradle and cross-contract changes trigger both platform paths.
+Use small changes that identify the current owner, affected platform contracts, tests executed, fallback behavior and remaining gates. The Android workflow runs shared and Android tests and both assemblies. The Apple workflow runs package fixtures, native framework builds, the native application baseline, repeated live NHL and onboarding checks, the original app unit suite and the auxiliary regression suite. All Xcode stages reuse the iPhone selected at the start of the job. Both workflows support manual dispatch. Shared, Gradle and cross-contract changes trigger both platform paths.
 
 The two workflows are prepared in the unified repository. A local JVM/Swift contract check, a hosted Xcode compilation and a physical-device playback check are distinct results. Record them separately. A portable feature becomes the Apple production default only after both platform gates pass.
 
