@@ -35,6 +35,12 @@ final class CinemaTokenVault: @unchecked Sendable {
         if result == errSecItemNotFound { result = SecItemAdd(query.merging(attributes) { _, v in v } as CFDictionary, nil) }
         guard result == errSecSuccess else { throw CinemaStorageError.unavailable }
     }
+    func delete() throws {
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw CinemaStorageError.unavailable
+        }
+    }
 }
 
 enum CinemaStorageError: LocalizedError {

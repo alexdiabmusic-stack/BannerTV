@@ -15,6 +15,33 @@ class TmdbTest {
         assertFalse(http.calls.single().contains("unit-test-token"))
         assertEquals("Bearer unit-test-token",http.headers.single()["Authorization"])
     }
+    @Test fun personalV3KeyIsAcceptedLikeNuvioAndNeverSentAsBearerToken() = runTest {
+        val apiKey = "0123456789abcdef0123456789abcdef"
+        val http = TestHttp { parseJson("""{"page":1,"total_pages":1,"results":[]}""") }
+        TmdbRepository(http) { apiKey }.search("example", language = "fr-CA")
+        assertTrue(http.calls.single().contains("api_key=$apiKey"))
+        assertTrue(http.calls.single().contains("language=fr-CA"))
+        assertNull(http.headers.single()["Authorization"])
+        assertEquals("application/json", http.headers.single()["Accept"])
+    }
+
+    @Test fun optionalMetadataDoesNotDiscardVerifiedExternalIdentifiers() = runTest {
+        val http = TestHttp {
+            parseJson("""{"id":42,"title":"Film","external_ids":{"imdb_id":"tt12345"},"release_date":"2026-01-01"}""")
+        }
+        val result = TmdbRepository(http) { "bearer-read-token" }.detail(
+            MediaId(MediaKind.Movie,42), includeArtwork = false,
+            includeCredits = false, includeRecommendations = false)
+        assertEquals("tt12345", result.addonVideoId())
+        assertTrue(result.cast.isEmpty())
+        assertTrue(result.recommendations.isEmpty())
+        val url = http.calls.single()
+        assertTrue(url.contains("append_to_response=external_ids"))
+        assertFalse(url.contains("images"))
+        assertFalse(url.contains("credits"))
+        assertFalse(url.contains("recommendations"))
+    }
+
     @Test fun episodeResolutionRequiresVerifiedIMDbIdentityAndSeason() = runTest {
         val http=TestHttp { parseJson("""{"id":42,"name":"Show","external_ids":{"imdb_id":"tt123"},"seasons":[{"season_number":0},{"season_number":2}]}""") }
         val title=TmdbRepository(http) { "unit-test-token" }.detail(MediaId(MediaKind.Series,42))

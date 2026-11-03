@@ -63,10 +63,18 @@ data class CinemaHome(val artwork: TmdbArtwork, val shelves: List<MediaShelf>) {
 /** TMDB is metadata, never a playback provider. The host injects a token from secure storage; no embedded key. */
 class TmdbRepository(private val http: SportsHttp, private val readToken: () -> String) {
     private suspend fun get(path: String, query: Map<String,String> = emptyMap(), ttl: Long = 300_000): JsonElement {
-        val token=readToken().trim()
-        require(token.isNotEmpty() && token.none { it.code < 32 }) { "TMDB credentials are unavailable" }
-        return http.getJson(requestURL("https://api.themoviedb.org/3/$path",query),
-            mapOf("Authorization" to "Bearer $token", "Accept" to "application/json"), ttlMillis = ttl, maxResponseBytes = 4*1024*1024)
+        val credential = readToken().trim()
+        require(credential.isNotEmpty() && credential.length <= 2048 &&
+            credential.none { it.code < 33 || it.code > 126 }) { "TMDB credentials are unavailable" }
+        // TMDB supports both a v3 personal API key (32 hexadecimal characters) and
+        // the v4 API Read Access Token. Nuvio's personal-key setting uses the former.
+        // Never put a v4 bearer token in a URL.
+        val v3Key = credential.matches(Regex("[A-Fa-f0-9]{32}"))
+        val parameters = if (v3Key) query + ("api_key" to credential) else query
+        val headers = if (v3Key) mapOf("Accept" to "application/json")
+            else mapOf("Authorization" to "Bearer $credential", "Accept" to "application/json")
+        return http.getJson(requestURL("https://api.themoviedb.org/3/$path", parameters),
+            headers, ttlMillis = ttl, maxResponseBytes = 4*1024*1024)
     }
     @Throws(Exception::class)
     suspend fun artwork(): TmdbArtwork {
@@ -76,6 +84,13 @@ class TmdbRepository(private val http: SportsHttp, private val readToken: () -> 
         return TmdbArtwork(base,images["poster_sizes"].array.map { it.string() },images["backdrop_sizes"].array.map { it.string() },
             images["logo_sizes"].array.map { it.string() },images["profile_sizes"].array.map { it.string() },images["still_sizes"].array.map { it.string() })
     }
+    /** A fresh, authenticated TMDB request for the iPhone connection check. */
+    @Throws(Exception::class)
+    suspend fun checkConnection(): Boolean {
+        val images = get("configuration", ttl = 0)["images"]
+        return images["secure_base_url"].string().trimEnd('/') == "https://image.tmdb.org/t/p"
+    }
+
     @Throws(Exception::class)
     suspend fun search(query: String, page: Int = 1, language: String = "en-US"): MediaPage {
         require(query.isNotBlank() && query.length <= 512); require(page in 1..500)
@@ -103,10 +118,18 @@ class TmdbRepository(private val http: SportsHttp, private val readToken: () -> 
         CinemaHome(art.await(),shelves.awaitAll())
     }
     @Throws(Exception::class)
-    suspend fun detail(id: MediaId, language: String = "en-US"): MediaDetail {
+    suspend fun detail(id: MediaId, language: String = "en-US",
+        includeArtwork: Boolean = true, includeCredits: Boolean = true,
+        includeRecommendations: Boolean = true): MediaDetail {
         val imageLanguage = language.substringBefore('-').lowercase().takeIf { it.matches(Regex("[a-z]{2,3}")) } ?: "en"
-        val raw=get("${id.kind.path}/${id.value}",mapOf("language" to language,"append_to_response" to "external_ids,images,credits,recommendations",
-            "include_image_language" to listOf(imageLanguage,"en","null").distinct().joinToString(",")))
+        val append = listOf("external_ids") +
+            listOfNotNull(if (includeArtwork) "images" else null,
+                if (includeCredits) "credits" else null,
+                if (includeRecommendations) "recommendations" else null)
+        val params = mutableMapOf("language" to language, "append_to_response" to append.joinToString(","))
+        if (includeArtwork) params["include_image_language"] =
+            listOf(imageLanguage, "en", "null").distinct().joinToString(",")
+        val raw = get("${id.kind.path}/${id.value}", params)
         val card=card(raw,id.kind)?.takeIf { it.id == id } ?: throw SportsIOException("TMDB returned a different title")
         val crew = raw["credits"]["crew"].array
         fun crewNames(jobs: Set<String>) = crew.filter { it["job"].string() in jobs }.mapNotNull { it["name"].stringOrNull() }.distinct()

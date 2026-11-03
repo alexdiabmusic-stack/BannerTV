@@ -1,5 +1,7 @@
 # Apple host integration
 
+For movies and TV metadata, the new Nuvio-style iPhone TMDB configuration is documented in [CINEMA_TMDB_SETUP.md](CINEMA_TMDB_SETUP.md). It supports personal TMDB v3 API keys or v4 read tokens stored in Keychain, a connection test, metadata language, and functional artwork/credits/episodes/recommendation switches. No Nuvio credential is bundled.
+
 `shared` builds the `BannerFoundation` static framework for `iosArm64` and `iosSimulatorArm64`. The current Swift app remains the reference UI. The code here does not replace its existing SportsCore routing until the framework can be built and the adapters verified in Xcode.
 
 ## Build and link (iPhone/iPad)
