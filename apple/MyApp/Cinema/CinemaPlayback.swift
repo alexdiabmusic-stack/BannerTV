@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import AVKit
 import Combine
@@ -201,3 +202,4 @@ struct BannerCinemaPlayer: View {
         .statusBarHidden()
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 
 // These are independent UI transport objects. The canonical domain types and all
@@ -111,3 +112,4 @@ struct CinemaPlayback: Identifiable {
     let stream: CinemaStream
     let startMillis: Int64
 }
+#endif

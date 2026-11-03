@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import Security
 import BannerFoundation
@@ -59,3 +60,4 @@ final class FileCinemaStateStore: NSObject, CinemaStateStore {
         try Data(value.utf8).write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])
     }
 }
+#endif

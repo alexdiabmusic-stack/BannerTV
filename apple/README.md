@@ -2,21 +2,15 @@
 
 `shared` builds the `BannerFoundation` static framework for `iosArm64` and `iosSimulatorArm64`. The current Swift app remains the reference UI. The code here does not replace its existing SportsCore routing until the framework can be built and the adapters verified in Xcode.
 
-## Build and link
+## Build and link (iPhone/iPad)
 
-Install full Xcode and select it with `xcode-select`. In the iOS target, set `BANNER_FOUNDATION_ROOT` to this repository's absolute path. Add a Run Script phase **before Compile Sources**:
+The MyApp target has an iOS-only **Build BannerFoundation** Run Script phase before Compile Sources. `apple/scripts/build-banner-foundation.sh` runs `./gradlew --no-watch-fs :shared:embedAndSignAppleFrameworkForXcode`, accommodates an optional `local.properties` `build.root` override, and exposes the static framework from `$(TARGET_TEMP_DIR)/BannerFoundation` to the iOS-only Swift build settings. MyApp's script sandboxing is disabled for this integration.
 
-```sh
-set -eu
-cd "$BANNER_FOUNDATION_ROOT"
-./gradlew :shared:embedAndSignAppleFrameworkForXcode
-```
+Use full Xcode (not Command Line Tools alone), JDK 17+ and the Gradle wrapper. On a new checkout, first run `python3 scripts/bootstrap-public-sports.py` from the repository root to provision the existing git-ignored public sports provider defaults. Open `apple/Stadia TV.xcodeproj`, choose the `MyApp` scheme and an iPhone simulator/device, and build. For a separate Kotlin check, run `./gradlew :shared:compileKotlinIosSimulatorArm64` on macOS.
 
-Set `ENABLE_USER_SCRIPT_SANDBOXING = NO` for that Gradle phase. Add `$(BANNER_FOUNDATION_ROOT)/shared/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)` to Framework Search Paths if using default Gradle output; this project can redirect build output through the root build script, so resolve the actual `shared` build directory before setting the path. Link `BannerFoundation` in Other Linker Flags (`$(inherited) -framework BannerFoundation`). Do not add the same framework a second time through CocoaPods/SPM. See the [official direct-integration instructions](https://www.jetbrains.com/help/kotlin-multiplatform-dev/multiplatform-direct-integration.html).
+The Cinema implementation resides at `apple/MyApp/Cinema/`. Because the Xcode project uses a `PBXFileSystemSynchronizedRootGroup` pointing at `MyApp`, Swift files in that folder are automatically target members. `KeychainAddonVault.swift` was moved there and is compiled exactly once. All seven Swift files are guarded with `#if os(iOS)`, so the existing macOS, tvOS and visionOS targets retain their legacy entertainment destinations.
 
-Copy `KeychainAddonVault.swift` into the Swift app target after the framework is available. Create one `AppleFoundation(cacheDirectory:vault:)` for the app lifetime, using a subdirectory of `FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]` and the Keychain vault. Keep its lifetime above individual screens; call `close()` only when retiring that foundation instance.
-
-Merge the usage-description key in `BannerFoundationInfo.plist` into the app's existing Info.plist for user-configured LAN servers. This is a fragment, not a replacement for the app's Info.plist. Keep App Transport Security and TLS certificate validation enabled.
+`CinemaRuntime.shared` constructs an iPhone Cinema foundation once. Sports host migration remains separate work. **The framework has not yet been built or tested on a device**; Gradle/Xcode compilation and functional QA remain required.
 
 ## Existing Swift app adapters
 

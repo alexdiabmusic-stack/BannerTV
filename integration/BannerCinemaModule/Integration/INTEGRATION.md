@@ -1,5 +1,7 @@
 # BannerTV Cinema — integration guide (source-checked November 2, 2026)
 
+> **Integration update, November 2, 2026:** iOS steps 1–5 have been applied to the MyApp target. Kotlin/Swift sources were relocated into active directories, the Apple factory patch was applied, and an iOS-only Xcode build phase/navigation were added. Copy instructions below document the *original staging layout*. Do not repeat those steps or apply the old patch. Xcode compilation, device QA, and further features remain outstanding.
+
 ## Purpose and verified baseline
 
 This is **original feature code**, built to reuse the existing BannerTV KMP foundation and achieve the **movie/series browsing and playback journey** users recognize from Nuvio. Do not paste Nuvio's own GPLv3 files into BannerTV unless you intentionally comply with that license. The UI is not branded as Nuvio.

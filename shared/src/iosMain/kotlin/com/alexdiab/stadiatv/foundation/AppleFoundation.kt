@@ -1,6 +1,9 @@
 package com.alexdiab.stadiatv.foundation
 
 import com.alexdiab.stadiatv.addons.*
+import com.alexdiab.stadiatv.catalog.CinemaBridge
+import com.alexdiab.stadiatv.catalog.CinemaStateStore
+import com.alexdiab.stadiatv.catalog.MediaPlaybackResolver
 import com.alexdiab.stadiatv.data.fantasy.*
 import com.alexdiab.stadiatv.data.odds.OddsService
 import com.alexdiab.stadiatv.net.*
@@ -50,5 +53,7 @@ class AppleFoundation(cacheDirectory: String, vault: AddonVault) {
     }), vault)
     fun odds(baseUrl: String, apiKey: String) = OddsService(sportsHttp, baseUrl, apiKey)
     fun tmdb(readToken: () -> String) = com.alexdiab.stadiatv.catalog.TmdbRepository(sportsHttp, readToken)
+    fun cinema(readToken: () -> String, stateStore: CinemaStateStore) =
+        CinemaBridge(tmdb(readToken), MediaPlaybackResolver(addons), addons, stateStore)
     fun close() { scope.cancel(); sportsHttp.close(); timingHttp.close(); addonHttp.close() }
 }

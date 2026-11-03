@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import Combine
 import BannerFoundation
@@ -186,3 +187,4 @@ enum CinemaUIError: LocalizedError {
         switch self { case .message(let value): return value }
     }
 }
+#endif
