@@ -8,7 +8,8 @@
 #   scripts/check-dynamic-type.sh
 set -eu
 
-ROOT="${CI_PRIMARY_REPOSITORY_PATH:-$(cd "$(dirname "$0")/.." && pwd)}"
+# These checks read Apple app paths; CI_PRIMARY_REPOSITORY_PATH is the monorepo root.
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BASELINE_FILE="$ROOT/scripts/dynamic-type-baseline.txt"
 baseline=$(tr -d '[:space:]' < "$BASELINE_FILE")
 count=$(grep -rE '\.font\(\.system\(size:' --include='*.swift' "$ROOT/MyApp" | wc -l | tr -d '[:space:]')

@@ -1,5 +1,7 @@
 # BannerTV for Android
 
+> **Apple / Xcode Cloud:** Open [BannerTV.xcworkspace](BannerTV.xcworkspace) at the repository root, then select the shared `MyApp` scheme for iOS. It references the existing `apple/Stadia TV.xcodeproj` without duplicating the shared Kotlin foundation. See [Apple setup](apple/README.md#xcode-cloud--repository-layout).
+
 The Android home of BannerTV, the sports and live TV app that also exists for iOS and tvOS. It contains the
 **Fire TV / Android TV** app (`:app`, package `com.alexdiab.stadiatv`) and the **Android phone** app
 (`:mobile`, package `com.alexdiab.stadiatv.mobile`), with Android adapters and playback in `:core`

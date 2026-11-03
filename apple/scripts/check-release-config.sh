@@ -6,7 +6,8 @@
 # environment (add it to the Xcode Cloud archive workflow once the app ships with its paywall).
 set -eu
 
-ROOT="${CI_PRIMARY_REPOSITORY_PATH:-$(cd "$(dirname "$0")/.." && pwd)}"
+# These checks read Apple app paths; CI_PRIMARY_REPOSITORY_PATH is the monorepo root.
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT="$ROOT/Stadia TV.xcodeproj/project.pbxproj"
 problems=0
 
