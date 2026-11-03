@@ -41,6 +41,16 @@ struct BannerCinemaRoot: View {
                     }
                     if let message = model.message {
                         CinemaNotice(message: message) { model.refresh() }
+                        if !model.tmdbPreferences.enabled || CinemaTokenVault.shared.read().isEmpty {
+                            Button {
+                                showSettings = true
+                            } label: {
+                                Label("Configure TMDB", systemImage: "gearshape")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .padding(.horizontal, 18)
+                        }
                     }
                     Text("This product uses the TMDB API but is not endorsed or certified by TMDB.")
                         .font(.caption2).foregroundStyle(CinemaStyle.secondary).padding(.horizontal, 18)
@@ -368,7 +378,11 @@ struct BannerCinemaDetail: View {
             if !details.creators.isEmpty { Text("Created by: \(details.creators.joined(separator: ", "))").font(.subheadline) }
             if title.isSeries {
                 Divider().overlay(.gray)
-                if details.seasons.isEmpty { Text("No episode list is available.") }
+                if details.seasons.isEmpty {
+                    Text(CinemaTMDBPreferences.shared.useEpisodes
+                        ? "No episode list is available."
+                        : "Episode metadata is turned off in TMDB Settings.")
+                }
                 else {
                     Picker("Season", selection: Binding(
                         get: { selectedSeason ?? details.seasons.first ?? 1 },

@@ -85,6 +85,23 @@ class CinemaBridge(
     private val mutex = Mutex()
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
     private var artwork: TmdbArtwork? = null
+    private var displayArtwork = true
+    private var displayCredits = true
+    private var displayEpisodes = true
+    private var displayRecommendations = true
+
+    /** Independent optional TMDB metadata modules. Source resolution always retains verified IDs. */
+    fun configureTmdb(artwork: Boolean, credits: Boolean, episodes: Boolean, recommendations: Boolean) {
+        displayArtwork = artwork
+        displayCredits = credits
+        displayEpisodes = episodes
+        displayRecommendations = recommendations
+    }
+
+    fun checkTmdb(completion: (String?, String?) -> Unit): CinemaRequest = run(completion) {
+        if (!tmdb.checkConnection()) throw IllegalStateException("TMDB returned unexpected configuration")
+        "{\"connected\":true}"
+    }
 
     private fun run(completion: (String?, String?) -> Unit, block: suspend () -> String): CinemaRequest =
         CinemaRequest(scope.launch {
@@ -120,15 +137,16 @@ class CinemaBridge(
     fun home(language: String, completion: (String?, String?) -> Unit): CinemaRequest = run(completion) {
         val result = tmdb.home(language)
         artwork = result.artwork
+        val images = result.artwork.takeIf { displayArtwork }
         json.encodeToString(CinemaHomeWire(
-            result.featured.map { it.wire(result.artwork) },
-            result.shelves.map { CinemaRowWire(it.rail.title, it.titles.map { card -> card.wire(result.artwork) }) }
+            result.featured.map { it.wire(images) },
+            result.shelves.map { CinemaRowWire(it.rail.title, it.titles.map { card -> card.wire(images) }) }
         ))
     }
 
     fun search(query: String, page: Int, language: String, completion: (String?, String?) -> Unit): CinemaRequest = run(completion) {
         val response = tmdb.search(query.trim(), page, language)
-        val a = art()
+        val a = if (displayArtwork) art() else null
         json.encodeToString(CinemaPageWire(response.results.map { it.wire(a) }, response.page < response.pages))
     }
 
@@ -142,35 +160,39 @@ class CinemaBridge(
             else -> throw IllegalArgumentException("Unknown shelf")
         }
         val response = tmdb.browse(selected, page, language)
-        val a = art()
+        val a = if (displayArtwork) art() else null
         json.encodeToString(CinemaPageWire(response.results.map { it.wire(a) }, response.page < response.pages))
     }
 
     fun detail(kind: String, id: Int, language: String, completion: (String?, String?) -> Unit): CinemaRequest = run(completion) {
-        val d = tmdb.detail(MediaId(kind.kind(), id), language)
-        val a = art()
+        val d = tmdb.detail(MediaId(kind.kind(), id), language,
+            includeArtwork = displayArtwork, includeCredits = displayCredits,
+            includeRecommendations = displayRecommendations)
+        val a = if (displayArtwork) art() else null
         json.encodeToString(CinemaDetailWire(
-            card = d.card.wire(a, d.logoPath).copy(backdropURL = a.url(d.heroPath, ArtworkKind.Backdrop, 1280)),
+            card = d.card.wire(a, d.logoPath).copy(backdropURL = a?.url(d.heroPath, ArtworkKind.Backdrop, 1280)),
             genres = d.genres, runtimeMinutes = d.runtimeMinutes, tagline = d.tagline,
             cast = d.cast.map { CinemaPersonWire(it.name, it.role, a.url(it.profilePath, ArtworkKind.Profile, 342)) },
-            directors = d.directors, creators = d.creators, seasons = d.seasons,
+            directors = d.directors, creators = d.creators, seasons = if (displayEpisodes) d.seasons else emptyList(),
             recommendations = d.recommendations.map { it.wire(a) },
             imdbIdVerified = d.imdbId != null
         ))
     }
 
     fun episodes(id: Int, season: Int, language: String, completion: (String?, String?) -> Unit): CinemaRequest = run(completion) {
-        val a = art()
+        if (!displayEpisodes) return@run "[]"
+        val a = if (displayArtwork) art() else null
         json.encodeToString(tmdb.episodes(MediaId(MediaKind.Series, id), season, language).map {
             CinemaEpisodeWire(it.season, it.number, it.title, it.overview,
-                a.url(it.stillPath, ArtworkKind.Still, 780), it.runtimeMinutes, it.airDate)
+                a?.url(it.stillPath, ArtworkKind.Still, 780), it.runtimeMinutes, it.airDate)
         })
     }
 
     fun sources(kind: String, id: Int, season: Int, episode: Int, language: String, completion: (String?, String?) -> Unit): CinemaRequest = run(completion) {
         val mediaId = MediaId(kind.kind(), id)
         val video = MediaVideo(mediaId, season.takeIf { it >= 0 }, episode.takeIf { it > 0 })
-        val detail = tmdb.detail(mediaId, language)
+        val detail = tmdb.detail(mediaId, language,
+            includeArtwork = false, includeCredits = false, includeRecommendations = false)
         val found = resolver.resolve(detail, video)
         json.encodeToString(CinemaSourcesWire(
             found.sources.map { CinemaSourceWire(it.provider, it.stream.name, it.stream.url, it.stream.headers) },
@@ -183,7 +205,7 @@ class CinemaBridge(
 
     fun library(completion: (String?, String?) -> Unit): CinemaRequest = run(completion) {
         // Offline library should not depend on TMDB configuration network availability.
-        val a = artwork
+        val a = artwork.takeIf { displayArtwork }
         mutex.withLock {
             val data = readLibrary()
             json.encodeToString(CinemaLibraryWire(data.watchlist.map { it.wire(a) },

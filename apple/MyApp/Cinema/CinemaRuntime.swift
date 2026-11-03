@@ -8,10 +8,12 @@ final class CinemaRuntime: ObservableObject {
     static let shared = CinemaRuntime()
     let foundation: AppleFoundation
     let bridge: CinemaBridge
+    let tmdbPreferences = CinemaTMDBPreferences.shared
     private var homeRequest: CinemaRequest?
     private var libraryRequest: CinemaRequest?
     private var searchRequest: CinemaRequest?
     private var addonRequest: CinemaRequest?
+    private var connectionRequest: CinemaRequest?
 
     @Published private(set) var home: CinemaHome?
     @Published private(set) var library = CinemaLibrary(saved: [], continuing: [])
@@ -22,7 +24,10 @@ final class CinemaRuntime: ObservableObject {
     @Published var hasMoreSearch = false
     @Published var message: String?
     @Published var addonsMessage: String?
-    var language = Locale.current.identifier.replacingOccurrences(of: "_", with: "-")
+    @Published private(set) var testingTMDB = false
+    @Published private(set) var tmdbConnected = false
+    @Published var tmdbConnectionMessage: String?
+    var language: String { tmdbPreferences.language }
     private var page = 1
     private var currentQuery = ""
 
@@ -32,6 +37,8 @@ final class CinemaRuntime: ObservableObject {
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         foundation = AppleFoundation(cacheDirectory: base.path, vault: KeychainAddonVault())
         bridge = foundation.cinema(readToken: { CinemaTokenVault.shared.read() }, stateStore: FileCinemaStateStore())
+        bridge.configureTmdb(artwork: tmdbPreferences.useArtwork, credits: tmdbPreferences.useCredits,
+            episodes: tmdbPreferences.useEpisodes, recommendations: tmdbPreferences.useRecommendations)
     }
 
     nonisolated static func decode<T: Decodable>(_ text: String?, _ error: String?, as: T.Type) -> Result<T, Error> {
@@ -42,8 +49,19 @@ final class CinemaRuntime: ObservableObject {
     }
 
     func refresh() {
+        refreshLibrary() // Offline watchlist/progress must not depend on TMDB credentials.
+        guard tmdbPreferences.enabled else {
+            homeRequest?.cancel()
+            home = nil
+            loadingHome = false
+            message = "TMDB metadata is disabled in Cinema Settings."
+            return
+        }
         guard !CinemaTokenVault.shared.read().isEmpty else {
-            message = "Connect TMDB metadata in Cinema Settings to browse titles."
+            homeRequest?.cancel()
+            home = nil
+            loadingHome = false
+            message = "Add your TMDB API key or Read Access Token in Cinema Settings to browse movies."
             return
         }
         loadingHome = true
@@ -59,11 +77,9 @@ final class CinemaRuntime: ObservableObject {
                 }
             }
         }
-        refreshLibrary()
     }
 
     func refreshLibrary() {
-        guard !CinemaTokenVault.shared.read().isEmpty else { return }
         libraryRequest?.cancel()
         libraryRequest = bridge.library { [weak self] text, error in
             let result: Result<CinemaLibrary, Error> = Self.decode(text, error, as: CinemaLibrary.self)
@@ -80,7 +96,8 @@ final class CinemaRuntime: ObservableObject {
         page = 1
         hasMoreSearch = false
         searchResults = []
-        guard currentQuery.count >= 2 else { searching = false; return }
+        guard currentQuery.count >= 2, tmdbPreferences.enabled,
+              !CinemaTokenVault.shared.read().isEmpty else { searching = false; return }
         performSearch()
     }
     func nextSearchPage() {
@@ -136,6 +153,52 @@ final class CinemaRuntime: ObservableObject {
             }
     }
 
+    func applyTMDBPreferences() {
+        bridge.configureTmdb(artwork: tmdbPreferences.useArtwork, credits: tmdbPreferences.useCredits,
+            episodes: tmdbPreferences.useEpisodes, recommendations: tmdbPreferences.useRecommendations)
+        searchRequest?.cancel()
+        searchResults = []
+        hasMoreSearch = false
+        refresh()
+    }
+
+    /// Run a real authenticated TMDB configuration request. Credentials remain in Keychain.
+    func checkTMDBConnection() {
+        connectionRequest?.cancel()
+        tmdbConnected = false
+        guard !CinemaTokenVault.shared.read().isEmpty else {
+            testingTMDB = false
+            tmdbConnectionMessage = "Enter your personal TMDB API key or Read Access Token first."
+            return
+        }
+        testingTMDB = true
+        tmdbConnectionMessage = nil
+        connectionRequest = bridge.checkTmdb { [weak self] raw, error in
+            let result: Result<CinemaTMDBConnection, Error> = Self.decode(raw, error, as: CinemaTMDBConnection.self)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.testingTMDB = false
+                switch result {
+                case .success(let response):
+                    self.tmdbConnected = response.connected
+                    self.tmdbConnectionMessage = response.connected
+                        ? "TMDB connection verified. Movies and series metadata are available."
+                        : "TMDB did not return a valid configuration."
+                    if response.connected { self.refresh() }
+                case .failure:
+                    self.tmdbConnectionMessage = "TMDB connection failed. Check your key, network and TMDB service."
+                }
+            }
+        }
+    }
+
+    func resetTMDBConnectionState() {
+        connectionRequest?.cancel()
+        testingTMDB = false
+        tmdbConnected = false
+        tmdbConnectionMessage = nil
+    }
+
     func refreshAddons() {
         addonRequest?.cancel()
         addonRequest = bridge.listAddons { [weak self] raw, error in
@@ -179,6 +242,10 @@ final class CinemaRuntime: ObservableObject {
         searchRequest?.cancel()
         libraryRequest?.cancel()
     }
+}
+
+private struct CinemaTMDBConnection: Decodable, Sendable {
+    let connected: Bool
 }
 
 enum CinemaUIError: LocalizedError {
