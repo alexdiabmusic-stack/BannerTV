@@ -413,7 +413,12 @@ struct RootView: View {
         case .channels: NavigationStack { LiveChannelsView().navigationTitle("Channels") }
         case .guide: NavigationStack { TVGuideView().navigationTitle("Guide") }
         case .library: NavigationStack { EntertainmentLibraryView() }
-        case .movies: CompleteLibraryRoot(kind: .movie)
+        case .movies:
+            #if os(iOS)
+            BannerCinemaRoot()
+            #else
+            CompleteLibraryRoot(kind: .movie)
+            #endif
         case .series: CompleteLibraryRoot(kind: .series)
         case .television: CompleteTelevisionView()
         case .sports: CompleteSportsView()

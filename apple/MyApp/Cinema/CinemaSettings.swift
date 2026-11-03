@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import BannerFoundation
 
@@ -77,3 +78,4 @@ struct BannerCinemaSettings: View {
         .preferredColorScheme(.dark)
     }
 }
+#endif

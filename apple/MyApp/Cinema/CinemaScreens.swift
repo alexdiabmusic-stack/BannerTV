@@ -1,3 +1,4 @@
+#if os(iOS)
 import SwiftUI
 import BannerFoundation
 
@@ -458,3 +459,4 @@ struct BannerCinemaDetail: View {
         }
     }
 }
+#endif

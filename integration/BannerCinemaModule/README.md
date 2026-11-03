@@ -1,11 +1,10 @@
-# Banner Cinema Module — movies and series for BannerTV
+# Banner Cinema Module — integrated iOS sources
 
-**Source-based feature implementation** for the BannerTV shared Kotlin foundation, native SwiftUI iOS host, and Fire TV / Android TV host. Uses original source code. Nuvio-inspired UX but no Nuvio source code or assets are included.
+The original staging package is now partly integrated into the iPhone app (steps 1–5). Active source files:
 
-## Start here
+- `shared/src/iosMain/kotlin/com/alexdiab/stadiatv/catalog/CinemaBridge.kt`
+- `shared/src/iosMain/kotlin/com/alexdiab/stadiatv/foundation/AppleFoundation.kt` (cinema factory)
+- `apple/MyApp/Cinema/` (six Swift Cinema files plus `KeychainAddonVault.swift`)
+- `apple/scripts/build-banner-foundation.sh` and the MyApp Xcode target Run Script phase
 
-Read **`Integration/INTEGRATION.md`** before copying files. Your existing shared foundation **already has** TMDB, Stremio add-ons, source resolution, progress and watchlist rules; use those instead of rewriting them. The Android phone already has `PhoneCinema.kt`; do not overwrite it.
-
-Main feature: scrolling hero, browse shelves, search, details, season/episode picker, cast, recommendations, watchlist and resume, secured add-on setup, source selection, basic native playback. The Android TV view is D-pad oriented. Native AVPlayer cannot handle every Nuvio stream type; extra playback engines, add-on catalogs, subtitle sidecars, tracking sync and Apple TV still require separate integration.
-
-No GitHub files were changed by generating this ZIP. There is no claim of a finished, compiling iOS/Android release; this is a code package for integration and validation in Xcode/Codex/Android Studio.
+The iPhone Movies tab and Live TV home Movies & Shows shortcut now route to `BannerCinemaRoot()`. Existing Series, Sports, Live TV, IPTV, and legacy Xtream VOD paths are preserved. `AndroidTV/` and `Tests/` files remaining in this staging folder are not yet integrated. `Integration/INTEGRATION.md` describes the historical copy procedure; do **not** reapply its AppleFoundation patch. Full platform compilation, device testing and source configuration remain outstanding.

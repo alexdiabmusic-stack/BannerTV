@@ -50,7 +50,13 @@ struct TelevisionHomeView: View {
                             .font(.headline).frame(maxWidth: .infinity, alignment: .leading).padding()
                             .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16))
                     }
-                    NavigationLink { EntertainmentLibraryView() } label: {
+                    NavigationLink {
+                        #if os(iOS)
+                        BannerCinemaRoot()
+                        #else
+                        EntertainmentLibraryView()
+                        #endif
+                    } label: {
                         Label("Your Movies & Series", systemImage: "film")
                             .font(.headline).frame(maxWidth: .infinity, alignment: .leading).padding()
                             .background(Theme.surface, in: RoundedRectangle(cornerRadius: 16))
