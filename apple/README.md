@@ -4,6 +4,20 @@ For movies and TV metadata, the new Nuvio-style iPhone TMDB configuration is doc
 
 `shared` builds the `BannerFoundation` static framework for `iosArm64` and `iosSimulatorArm64`. The current Swift app remains the reference UI. The code here does not replace its existing SportsCore routing until the framework can be built and the adapters verified in Xcode.
 
+## Xcode Cloud / repository layout
+
+**For Xcode Cloud, use the repository-root `BannerTV.xcworkspace`**, which references the existing `apple/Stadia TV.xcodeproj`. Choose the existing shared `MyApp` scheme with an iOS build/archive action. The workspace is an entrypoint, not a second project; it does not move your Swift files or duplicate the KMP foundation.
+
+The repository-root `ci_scripts/ci_pre_xcodebuild.sh` is discoverable alongside that workspace, provisions git-ignored public sports defaults (required by the `:shared` Gradle module), writes optional Xcode Cloud secrets to the correct `apple/Config/Secrets.xcconfig`, and runs the existing release and Dynamic Type checks from `apple/scripts/`. Old cloud workflows bound directly to `apple/Stadia TV.xcodeproj` can continue using `apple/ci_scripts/ci_pre_xcodebuild.sh`, which forwards to the canonical script.
+
+If Xcode Cloud was previously set up against a missing root-level `Stadia TV.xcodeproj`, select/reconfigure the **BannerTV.xcworkspace** product and **MyApp** scheme in Xcode's Cloud workflow UI after merging; committing a workspace does not silently change an existing App Store Connect workflow. Xcode Cloud still clones the complete repository but builds the selected iOS targets, including the required KMP `BannerFoundation`. A Mac/Xcode Cloud build is still needed to validate Kotlin/Native compilation, Java availability and signing.
+
+From the repository root:
+```sh
+open BannerTV.xcworkspace
+xcodebuild -list -workspace BannerTV.xcworkspace
+```
+
 ## Build and link (iPhone/iPad)
 
 The MyApp target has an iOS-only **Build BannerFoundation** Run Script phase before Compile Sources. `apple/scripts/build-banner-foundation.sh` runs `./gradlew --no-watch-fs :shared:embedAndSignAppleFrameworkForXcode`, accommodates an optional `local.properties` `build.root` override, and exposes the static framework from `$(TARGET_TEMP_DIR)/BannerFoundation` to the iOS-only Swift build settings. MyApp's script sandboxing is disabled for this integration.
